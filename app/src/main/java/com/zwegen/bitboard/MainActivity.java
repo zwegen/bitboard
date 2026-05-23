@@ -1233,14 +1233,11 @@ public class MainActivity extends Activity {
         lightningRow.setGravity(Gravity.CENTER);
         lightningRow.setOrientation(LinearLayout.HORIZONTAL);
 
-        TextView lightningLabel = text("lightning: ", 15, MUTED, false);
-        lightningRow.addView(lightningLabel, new LinearLayout.LayoutParams(-2, -2));
-
-        TextView lightningAddress = text("bitboard@coinos.io", 15, ACCENT, false);
+        TextView lightningAddress = text("Donate Lightning", 15, ACCENT, false);
         lightningAddress.setPaintFlags(lightningAddress.getPaintFlags() | android.graphics.Paint.UNDERLINE_TEXT_FLAG);
         lightningAddress.setOnClickListener(v -> {
             try {
-                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("https://coinos.io/BitBoard")));
+                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("https://coinos.io/zwgn")));
             } catch (Exception e) {
                 Toast.makeText(this, "Could not open donation link", Toast.LENGTH_SHORT).show();
             }
