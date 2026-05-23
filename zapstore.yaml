@@ -1,0 +1,8 @@
+repository: https://github.com/zwegen/bitboard
+icon: bitboard_icon.png
+images:
+    - bitboard01.png
+    - bitboard02.png
+metadata_sources:
+    - github
+pubkey: npub18xg25ns8m8hhsjtgnsxzpty2ftepu857xsafsqy5nm0jftpvzkyqgv4c2c
