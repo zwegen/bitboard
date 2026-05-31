@@ -15,6 +15,7 @@ import android.os.Build;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.DocumentsContract;
 import android.text.InputType;
 import android.text.SpannableString;
 import android.text.Spanned;
@@ -41,10 +42,14 @@ import org.json.JSONObject;
 import java.io.BufferedReader;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.io.OutputStreamWriter;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 import java.util.HashMap;
@@ -63,15 +68,23 @@ public class MainActivity extends Activity {
     private static final String KEY_REFRESH_INTERVAL_MS = "refresh_interval_ms";
     private static final String KEY_CARDS_EXPANDED = "cards_expanded";
     private static final String KEY_ONLINE_ONLY = "online_only";
+    private static final String KEY_BACKUP_TREE_URI = "backup_tree_uri";
     private static final String KEY_LAST_DEVICE_PREFIX = "last_device_";
     private static final long DEFAULT_REFRESH_INTERVAL_MS = 120000L;
     private static final long REFRESH_MANUAL = 0L;
+    private static final int REQUEST_EXPORT_BACKUP = 7101;
+    private static final int REQUEST_IMPORT_BACKUP = 7102;
+    private static final int REQUEST_BACKUP_FOLDER = 7103;
+    private static final int BACKUP_ACTION_NONE = 0;
+    private static final int BACKUP_ACTION_EXPORT = 1;
+    private static final int BACKUP_ACTION_IMPORT = 2;
     private static final int BG = Color.rgb(7, 17, 31);
     private static final int CARD = Color.rgb(14, 28, 48);
     private static final int CARD2 = Color.rgb(18, 36, 61);
     private static final int TEXT = Color.rgb(232, 240, 255);
     private static final int MUTED = Color.rgb(139, 157, 185);
     private static final int ACCENT = Color.rgb(56, 189, 248);
+    private static final int ACTION_BLUE = Color.rgb(37, 99, 235);
     private static final int GOOD = Color.rgb(34, 197, 94);
     private static final int BORDER = Color.rgb(75, 82, 94);
     private static final int ONLINE_BORDER = Color.rgb(21, 87, 45);
@@ -89,6 +102,7 @@ public class MainActivity extends Activity {
     private View activeOverlayCard;
     private double networkHashrateEh = 0;
     private long networkHashrateFetchedAt = 0;
+    private int pendingBackupAction = BACKUP_ACTION_NONE;
     private final Map<String, CardHolder> cards = new HashMap<>();
     private final Map<String, Device> currentDevices = new HashMap<>();
     private boolean refreshRunning = false;
@@ -133,6 +147,25 @@ public class MainActivity extends Activity {
         handler.removeCallbacks(footerTimeRunnable);
         handler.removeCallbacks(headerSummaryRunnable);
         super.onPause();
+    }
+
+    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (resultCode != RESULT_OK || data == null || data.getData() == null) return;
+        Uri uri = data.getData();
+        if (requestCode == REQUEST_EXPORT_BACKUP) {
+            writeBackupToUri(uri);
+        } else if (requestCode == REQUEST_IMPORT_BACKUP) {
+            importBackupFromUri(uri);
+        } else if (requestCode == REQUEST_BACKUP_FOLDER) {
+            saveBackupFolder(uri, data.getFlags());
+            if (pendingBackupAction == BACKUP_ACTION_EXPORT) {
+                writeBackupToFolder(uri);
+            } else if (pendingBackupAction == BACKUP_ACTION_IMPORT) {
+                openBackupImportPicker(uri);
+            }
+            pendingBackupAction = BACKUP_ACTION_NONE;
+        }
     }
 
     @Override protected void onDestroy() {
@@ -707,7 +740,7 @@ public class MainActivity extends Activity {
         olp.setMargins(dp(8), 0, 0, 0);
         head.addView(open, olp);
 
-        ImageButton refresh = iconButton(R.drawable.ic_card_refresh, Color.rgb(37, 99, 235), "Refresh");
+        ImageButton refresh = iconButton(R.drawable.ic_card_refresh, ACTION_BLUE, "Refresh");
         refresh.setOnClickListener(v -> refreshDeviceNow(h));
         LinearLayout.LayoutParams flp = new LinearLayout.LayoutParams(dp(28), dp(28));
         flp.setMargins(dp(14), 0, 0, 0);
@@ -1210,11 +1243,178 @@ public class MainActivity extends Activity {
         final PopupWindow[] ref = new PopupWindow[1];
         menu.addView(menuActionIcon(R.drawable.ic_menu_add, "Add", () -> showAddDialog()), new LinearLayout.LayoutParams(-1, -2));
         menu.addView(menuActionIcon(R.drawable.ic_menu_devices, "Devices", () -> showBitaxeDialog()), new LinearLayout.LayoutParams(-1, -2));
+        menu.addView(menuActionIcon(R.drawable.ic_menu_backup, "Backup", () -> showBackupDialog()), new LinearLayout.LayoutParams(-1, -2));
         menu.addView(menuActionIcon(R.drawable.ic_menu_interval, "Interval", () -> showRefreshIntervalDialog()), new LinearLayout.LayoutParams(-1, -2));
         menu.addView(menuActionIcon(R.drawable.ic_menu_display, "Display", () -> showDisplayDialog()), new LinearLayout.LayoutParams(-1, -2));
         menu.addView(menuActionIcon(R.drawable.ic_menu_donate, "Donate", () -> showDonateDialog()), new LinearLayout.LayoutParams(-1, -2));
         menu.addView(menuActionIcon(R.drawable.ic_menu_info, "Info", () -> showInfoDialog()), new LinearLayout.LayoutParams(-1, -2));
         ref[0] = showOverlayCard(menu, 280);
+    }
+
+    private void showBackupDialog() {
+        LinearLayout menu = menuCard("Backup");
+        final PopupWindow[] ref = new PopupWindow[1];
+        addDialogMenuAction(menu, menuAction("Export", () -> { ref[0].dismiss(); startBackupExport(); }));
+        addDialogMenuAction(menu, menuAction("Import", () -> { ref[0].dismiss(); startBackupImport(); }));
+        LinearLayout closeRow = dialogActionRow(menu);
+        closeRow.addView(actionButton("Close", ACTION_BLUE, () -> ref[0].dismiss()), new LinearLayout.LayoutParams(-1, -2));
+        ref[0] = showOverlayCard(menu, 300);
+    }
+
+    private void startBackupExport() {
+        Uri folder = getBackupFolderUri();
+        if (folder != null) {
+            writeBackupToFolder(folder);
+        } else {
+            pendingBackupAction = BACKUP_ACTION_EXPORT;
+            startBackupFolderPicker();
+        }
+    }
+
+    private void startBackupImport() {
+        Uri folder = getBackupFolderUri();
+        if (folder != null) {
+            openBackupImportPicker(folder);
+        } else {
+            pendingBackupAction = BACKUP_ACTION_IMPORT;
+            startBackupFolderPicker();
+        }
+    }
+
+    private void startBackupFolderPicker() {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION |
+                Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            intent.putExtra(DocumentsContract.EXTRA_INITIAL_URI, documentsFolderUri());
+        }
+        Toast.makeText(this, "Choose Documents folder", Toast.LENGTH_LONG).show();
+        try {
+            startActivityForResult(intent, REQUEST_BACKUP_FOLDER);
+        } catch (Exception e) {
+            pendingBackupAction = BACKUP_ACTION_NONE;
+            Toast.makeText(this, "Could not open folder picker", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void openBackupImportPicker(Uri folder) {
+        Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("application/json");
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            intent.putExtra(DocumentsContract.EXTRA_INITIAL_URI, folder);
+        }
+        try {
+            startActivityForResult(intent, REQUEST_IMPORT_BACKUP);
+        } catch (Exception e) {
+            Toast.makeText(this, "Could not open file picker", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private Uri getBackupFolderUri() {
+        String value = prefs.getString(KEY_BACKUP_TREE_URI, "");
+        if (value == null || value.isEmpty()) return null;
+        return Uri.parse(value);
+    }
+
+    private void saveBackupFolder(Uri uri, int flags) {
+        int permissions = flags & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+        try {
+            getContentResolver().takePersistableUriPermission(uri, permissions);
+        } catch (Exception ignored) {
+        }
+        prefs.edit().putString(KEY_BACKUP_TREE_URI, uri.toString()).apply();
+    }
+
+    private Uri documentsFolderUri() {
+        return DocumentsContract.buildDocumentUri(
+                "com.android.externalstorage.documents",
+                "primary:Documents"
+        );
+    }
+
+    private String backupFilename() {
+        return "bitboard-backup-" + new SimpleDateFormat("yyyyMMdd", Locale.US).format(new Date()) + ".json";
+    }
+
+    private JSONObject createBackupJson() throws Exception {
+        JSONObject root = new JSONObject();
+        root.put("app", "BitBoard");
+        root.put("version", 1);
+        root.put("exportedAt", new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ", Locale.US).format(new Date()));
+
+        JSONArray devices = new JSONArray();
+        for (String ip : loadIps()) {
+            JSONObject item = new JSONObject();
+            item.put("ip", ip);
+            devices.put(item);
+        }
+        root.put("devices", devices);
+
+        JSONObject settings = new JSONObject();
+        settings.put("refreshIntervalMs", getRefreshIntervalMs());
+        settings.put("onlineOnly", isOnlineOnly());
+        settings.put("cardsExpanded", areCardsExpandedByDefault());
+        root.put("settings", settings);
+        return root;
+    }
+
+    private void writeBackupToUri(Uri uri) {
+        try {
+            OutputStream out = getContentResolver().openOutputStream(uri);
+            if (out == null) throw new Exception("No output stream");
+            OutputStreamWriter writer = new OutputStreamWriter(out, "UTF-8");
+            try {
+                writer.write(createBackupJson().toString(2));
+            } finally {
+                writer.close();
+            }
+            Toast.makeText(this, "Backup exported", Toast.LENGTH_LONG).show();
+        } catch (Exception e) {
+            Toast.makeText(this, "Export failed", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void writeBackupToFolder(Uri folderUri) {
+        try {
+            Uri target = DocumentsContract.createDocument(getContentResolver(), folderUri, "application/json", backupFilename());
+            if (target == null) throw new Exception("No backup file");
+            writeBackupToUri(target);
+        } catch (Exception e) {
+            Toast.makeText(this, "Export failed", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void importBackupFromUri(Uri uri) {
+        try {
+            InputStream in = getContentResolver().openInputStream(uri);
+            if (in == null) throw new Exception("No input stream");
+            JSONObject root = new JSONObject(readText(in));
+            if (!"BitBoard".equals(root.optString("app", ""))) throw new Exception("Wrong app");
+            JSONArray devices = root.optJSONArray("devices");
+            if (devices == null) throw new Exception("No devices");
+
+            List<String> ips = new ArrayList<>();
+            for (int i = 0; i < devices.length(); i++) {
+                JSONObject item = devices.optJSONObject(i);
+                String ip = cleanIp(item != null ? item.optString("ip", "") : devices.optString(i, ""));
+                if (!ip.isEmpty() && !ips.contains(ip)) ips.add(ip);
+            }
+
+            JSONObject settings = root.optJSONObject("settings");
+            if (settings != null) {
+                if (settings.has("refreshIntervalMs")) setRefreshIntervalMs(settings.optLong("refreshIntervalMs", DEFAULT_REFRESH_INTERVAL_MS));
+                if (settings.has("onlineOnly")) setOnlineOnly(settings.optBoolean("onlineOnly", isOnlineOnly()));
+                if (settings.has("cardsExpanded")) prefs.edit().putBoolean(KEY_CARDS_EXPANDED, settings.optBoolean("cardsExpanded", areCardsExpandedByDefault())).apply();
+            }
+
+            saveIps(ips);
+            refresh();
+            Toast.makeText(this, "Backup imported", Toast.LENGTH_LONG).show();
+        } catch (Exception e) {
+            Toast.makeText(this, "Import failed", Toast.LENGTH_LONG).show();
+        }
     }
 
     private void showDonateDialog() {
@@ -1247,7 +1447,7 @@ public class MainActivity extends Activity {
 
         final PopupWindow[] ref = new PopupWindow[1];
         LinearLayout closeRow = dialogActionRow(menu);
-        closeRow.addView(actionButton("Close", Color.rgb(71, 85, 105), () -> ref[0].dismiss()), new LinearLayout.LayoutParams(-1, -2));
+        closeRow.addView(actionButton("Close", ACTION_BLUE, () -> ref[0].dismiss()), new LinearLayout.LayoutParams(-1, -2));
         ref[0] = showOverlayCard(menu, 300);
     }
 
@@ -1265,7 +1465,7 @@ public class MainActivity extends Activity {
         menu.addView(version, new LinearLayout.LayoutParams(-1, -2));
         LinearLayout closeRow = dialogActionRow(menu);
         final PopupWindow[] ref = new PopupWindow[1];
-        closeRow.addView(actionButton("Close", Color.rgb(71, 85, 105), () -> ref[0].dismiss()), new LinearLayout.LayoutParams(-1, -2));
+        closeRow.addView(actionButton("Close", ACTION_BLUE, () -> ref[0].dismiss()), new LinearLayout.LayoutParams(-1, -2));
         ref[0] = showOverlayCard(menu, 300);
     }
 
@@ -1309,7 +1509,7 @@ public class MainActivity extends Activity {
         render[0].run();
 
         LinearLayout closeRow = dialogActionRow(menu);
-        closeRow.addView(actionButton("Close", Color.rgb(71, 85, 105), () -> ref[0].dismiss()), new LinearLayout.LayoutParams(-1, -2));
+        closeRow.addView(actionButton("Close", ACTION_BLUE, () -> ref[0].dismiss()), new LinearLayout.LayoutParams(-1, -2));
         ref[0] = showOverlayCard(menu, 300);
     }
 
@@ -1343,7 +1543,7 @@ public class MainActivity extends Activity {
         addRefreshIntervalOption(menu, ref, "3 minutes", 180000L);
         addRefreshIntervalOption(menu, ref, "Pull to refresh", REFRESH_MANUAL);
         LinearLayout closeRow = dialogActionRow(menu);
-        closeRow.addView(actionButton("Close", Color.rgb(71, 85, 105), () -> ref[0].dismiss()), new LinearLayout.LayoutParams(-1, -2));
+        closeRow.addView(actionButton("Close", ACTION_BLUE, () -> ref[0].dismiss()), new LinearLayout.LayoutParams(-1, -2));
         ref[0] = showOverlayCard(menu, 300);
     }
 
@@ -1386,7 +1586,7 @@ public class MainActivity extends Activity {
             }
         }
         LinearLayout closeRow = dialogActionRow(menu);
-        closeRow.addView(actionButton("Close", Color.rgb(71, 85, 105), () -> ref[0].dismiss()), new LinearLayout.LayoutParams(-1, -2));
+        closeRow.addView(actionButton("Close", ACTION_BLUE, () -> ref[0].dismiss()), new LinearLayout.LayoutParams(-1, -2));
         ref[0] = showOverlayCard(menu, 300);
     }
 
@@ -1396,7 +1596,7 @@ public class MainActivity extends Activity {
         addDialogMenuAction(menu, menuAction("Edit IP", () -> showEditIpDialog(ip)));
         LinearLayout row = dialogActionRow(menu);
         row.addView(actionButton("Delete", Color.rgb(248, 113, 113), () -> confirmDeleteIp(ip)), actionButtonLp(false));
-        row.addView(actionButton("Back", Color.rgb(71, 85, 105), () -> showBitaxeDialog()), actionButtonLp(true));
+        row.addView(actionButton("Back", ACTION_BLUE, () -> showBitaxeDialog()), actionButtonLp(true));
         ref[0] = showOverlayCard(menu, 300);
     }
 
@@ -1457,6 +1657,18 @@ public class MainActivity extends Activity {
         return out;
     }
     private void saveIps(List<String> ips) { JSONArray a = new JSONArray(); for(String ip:ips) a.put(ip); prefs.edit().putString(KEY_IPS, a.toString()).apply(); }
+
+    private String readText(InputStream stream) throws Exception {
+        BufferedReader br = new BufferedReader(new InputStreamReader(stream, "UTF-8"));
+        StringBuilder sb = new StringBuilder();
+        String line;
+        try {
+            while ((line = br.readLine()) != null) sb.append(line);
+        } finally {
+            br.close();
+        }
+        return sb.toString();
+    }
 
     private void saveLastDevice(Device d) {
         if (d == null || d.ip == null || d.ip.isEmpty()) return;
