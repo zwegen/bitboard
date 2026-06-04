@@ -17,9 +17,6 @@ import android.os.Handler;
 import android.os.Looper;
 import android.provider.DocumentsContract;
 import android.text.InputType;
-import android.text.SpannableString;
-import android.text.Spanned;
-import android.text.style.ForegroundColorSpan;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -53,9 +50,7 @@ import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Map;
-import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.concurrent.CountDownLatch;
@@ -72,7 +67,6 @@ public class MainActivity extends Activity {
     private static final String KEY_LAST_DEVICE_PREFIX = "last_device_";
     private static final long DEFAULT_REFRESH_INTERVAL_MS = 120000L;
     private static final long REFRESH_MANUAL = 0L;
-    private static final int REQUEST_EXPORT_BACKUP = 7101;
     private static final int REQUEST_IMPORT_BACKUP = 7102;
     private static final int REQUEST_BACKUP_FOLDER = 7103;
     private static final int BACKUP_ACTION_NONE = 0;
@@ -89,6 +83,9 @@ public class MainActivity extends Activity {
     private static final int BORDER = Color.rgb(75, 82, 94);
     private static final int ONLINE_BORDER = Color.rgb(21, 87, 45);
     private static final int UPDATE_BORDER = Color.rgb(74, 222, 128);
+    private static final String ZAPSTORE_URL = "https://zapstore.dev/apps/com.zwegen.bitboard";
+    private static final String GITHUB_URL = "https://github.com/zwegen/bitboard";
+    private static final String DONATION_URL = "https://coinos.io/zwgn";
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService executor = Executors.newFixedThreadPool(12);
@@ -153,9 +150,7 @@ public class MainActivity extends Activity {
         super.onActivityResult(requestCode, resultCode, data);
         if (resultCode != RESULT_OK || data == null || data.getData() == null) return;
         Uri uri = data.getData();
-        if (requestCode == REQUEST_EXPORT_BACKUP) {
-            writeBackupToUri(uri);
-        } else if (requestCode == REQUEST_IMPORT_BACKUP) {
+        if (requestCode == REQUEST_IMPORT_BACKUP) {
             importBackupFromUri(uri);
         } else if (requestCode == REQUEST_BACKUP_FOLDER) {
             saveBackupFolder(uri, data.getFlags());
@@ -268,15 +263,6 @@ public class MainActivity extends Activity {
         if (interval > 0 && !ips.isEmpty()) handler.postDelayed(refreshRunnable, Math.max(1000L, interval / ips.size()));
     }
 
-    private String getRefreshIntervalLabel() {
-        long interval = getRefreshIntervalMs();
-        if (interval == REFRESH_MANUAL) return "Pull to refresh";
-        if (interval == 60000L) return "1 minute";
-        if (interval == 120000L) return "2 minutes";
-        if (interval == 180000L) return "3 minutes";
-        return "3 minutes";
-    }
-
     private void refresh(boolean showUpdating) {
         handler.removeCallbacks(refreshRunnable);
         if (refreshRunning) { if (swipeRefresh != null) swipeRefresh.setRefreshing(false); return; }
@@ -287,7 +273,7 @@ public class MainActivity extends Activity {
             return;
         }
         refreshRunning = true;
-        if (showUpdating && !cards.isEmpty()) summaryText.setText("Aktualisiere…");
+        if (showUpdating && !cards.isEmpty()) summaryText.setText("Updating...");
         executor.execute(() -> {
             List<Device> devices = Collections.synchronizedList(new ArrayList<>());
             CountDownLatch latch = new CountDownLatch(ips.size());
@@ -357,7 +343,7 @@ public class MainActivity extends Activity {
         cards.clear();
         currentDevices.clear();
         deviceList.removeAllViews();
-        summaryText.setText("Noch keine Geräte. Unten + drücken und IP eintragen.");
+        summaryText.setText("No devices yet. Open the menu and add an IP.");
         chanceText.setText("");
     }
 
@@ -554,7 +540,7 @@ public class MainActivity extends Activity {
             chanceText.setText(formatSoloChance(totalHashGh, networkHashrateEh));
             refreshNetworkHashrateIfNeeded(false);
         } else {
-            chanceText.setText("Loading chance…");
+            chanceText.setText("Loading chance...");
             refreshNetworkHashrateIfNeeded(true);
         }
     }
@@ -580,9 +566,10 @@ public class MainActivity extends Activity {
             c.setConnectTimeout(5000);
             c.setReadTimeout(5000);
             c.setRequestProperty("Accept", "application/json");
-            BufferedReader br = new BufferedReader(new InputStreamReader(c.getInputStream()));
             StringBuilder sb = new StringBuilder(); String line;
-            while ((line = br.readLine()) != null) sb.append(line);
+            try (BufferedReader br = new BufferedReader(new InputStreamReader(c.getInputStream()))) {
+                while ((line = br.readLine()) != null) sb.append(line);
+            }
             Matcher m = Pattern.compile("\\\"currentHashrate\\\"\\s*:\\s*([0-9.Ee+-]+)").matcher(sb.toString());
             if (m.find()) {
                 double hashesPerSecond = Double.parseDouble(m.group(1));
@@ -654,53 +641,9 @@ public class MainActivity extends Activity {
             d.wifi = wifiPercent(num(j, "wifiRSSI"));
             d.uptime = fmtUptime((long) numAny(j, "uptimeSeconds", "uptime", "upTime"));
         } catch (Exception e) {
-            d.online = false; d.error = e.getMessage(); d.latency = System.currentTimeMillis() - start;
+            d.online = false; d.latency = System.currentTimeMillis() - start;
         } finally { if (c != null) c.disconnect(); }
         return d;
-    }
-
-    private double fetchTenMinuteHashRate(String ip) {
-        HttpURLConnection c = null;
-        try {
-            URL url = new URL("http://" + ip + "/api/system/statistics/dashboard");
-            c = (HttpURLConnection) url.openConnection();
-            c.setUseCaches(false);
-            c.setConnectTimeout(1500); c.setReadTimeout(1500);
-            c.setRequestProperty("Accept", "application/json");
-            c.setRequestProperty("Cache-Control", "no-cache");
-            c.setRequestProperty("Connection", "close");
-            if (c.getResponseCode() < 200 || c.getResponseCode() >= 300) return 0;
-            InputStream stream = c.getInputStream();
-            if (stream == null) return 0;
-            BufferedReader br = new BufferedReader(new InputStreamReader(stream));
-            StringBuilder sb = new StringBuilder(); String line;
-            try {
-                while ((line = br.readLine()) != null) sb.append(line);
-            } finally {
-                br.close();
-            }
-            JSONObject j = new JSONObject(sb.toString());
-            JSONArray stats = j.optJSONArray("statistics");
-            if (stats == null || stats.length() == 0) return 0;
-            double current = j.optDouble("currentTimestamp", 0);
-            if (current <= 0) {
-                JSONArray last = stats.optJSONArray(stats.length() - 1);
-                if (last != null && last.length() > 3) current = last.optDouble(3, 0);
-            }
-            double cutoff = current - 600000; // axeOS dashboard timestamps are milliseconds; keep last 10 minutes.
-            double sum = 0; int count = 0;
-            for (int i = 0; i < stats.length(); i++) {
-                JSONArray row = stats.optJSONArray(i);
-                if (row == null || row.length() == 0) continue;
-                double timestamp = row.length() > 3 ? row.optDouble(3, current) : current;
-                if (current > 0 && timestamp < cutoff) continue;
-                double hash = row.optDouble(0, 0);
-                if (hash > 0) { sum += hash; count++; }
-            }
-            return count > 0 ? sum / count : 0;
-        } catch (Exception ignored) {
-            return 0;
-        } finally { if (c != null) c.disconnect(); }
     }
 
     private CardHolder addDeviceCard(Device d) {
@@ -763,11 +706,11 @@ public class MainActivity extends Activity {
         i = addMetricRow(grid, i, h, "Hashrate", "Session Difficulty");
         i = addMetricRow(grid, i, h, "Temperature", "Power");
         i = addMetricRow(grid, i, h, "Shares", "Response Time");
-        i = addMetricRow(grid, i, h, "Hashrate 10min", "Best Difficulty");
+        i = addMetricRow(grid, i, h, "Hashrate 10 min", "Best Difficulty");
         i = addMetricRow(grid, i, h, "VR Temperature", "Voltage");
         i = addMetricRow(grid, i, h, "Frequency", "Core Voltage");
         i = addMetricRow(grid, i, h, "Pool Difficulty", "Fan Speed");
-        addMetricRow(grid, i, h, "WiFi Signal", "Uptime");
+        addMetricRow(grid, i, h, "Wi-Fi Signal", "Uptime");
         h.expanded = areCardsExpandedByDefault();
         applyCompactMode(h);
         card.setOnClickListener(v -> toggleCompactMode(h));
@@ -792,13 +735,13 @@ public class MainActivity extends Activity {
         String[] vals;
         if (h.expanded) {
             labels = new String[] {
-                "Hashrate", "Hashrate 10min",
+                "Hashrate", "Hashrate 10 min",
                 "Best Difficulty", "Session Difficulty",
                 "Temperature", "VR Temperature",
                 "Power", "Voltage",
                 "Frequency", "Core Voltage",
                 "Shares", "Pool Difficulty",
-                "Response Time", "WiFi Signal",
+                "Response Time", "Wi-Fi Signal",
                 "Fan Speed", "Uptime"
             };
             vals = new String[] {
@@ -816,11 +759,11 @@ public class MainActivity extends Activity {
                 "Hashrate", "Session Difficulty",
                 "Temperature", "Power",
                 "Shares", "Response Time",
-                "Hashrate 10min", "Best Difficulty",
+                "Hashrate 10 min", "Best Difficulty",
                 "VR Temperature", "Voltage",
                 "Frequency", "Core Voltage",
                 "Pool Difficulty", "Fan Speed",
-                "WiFi Signal", "Uptime"
+                "Wi-Fi Signal", "Uptime"
             };
             vals = new String[] {
                 fmtHash(d.hashRate), fmtDiff(d.sessionDiff),
@@ -843,9 +786,11 @@ public class MainActivity extends Activity {
             setTemperatureWarningColor(h.values[5], d.vrTemp, 70, 80);
             setResponseTimeWarningColor(h.values[12], d.responseTime);
             setWifiSignalWarningColor(h.values[13], d.wifi);
+            setFanSpeedWarningColor(h.values[14], d.temp, d.fanSpeed);
         } else {
             setTemperatureWarningColor(h.values[2], d.temp, 60, 70);
             setResponseTimeWarningColor(h.values[5], d.responseTime);
+            setFanSpeedWarningColor(h.values[13], d.temp, d.fanSpeed);
         }
         double best = diffNumber(d.bestDiff);
         double session = diffNumber(d.sessionDiff);
@@ -891,12 +836,12 @@ public class MainActivity extends Activity {
     }
 
     private boolean isCriticalDevice(Device d) {
-        return d.temp >= 70 || d.vrTemp >= 80 || d.responseTime >= 150 || wifiPercentValue(d.wifi) < 50;
+        return d.temp >= 70 || d.vrTemp >= 80 || d.responseTime >= 200 || wifiPercentValue(d.wifi) < 40;
     }
 
     private boolean isWarningDevice(Device d) {
         int wifi = wifiPercentValue(d.wifi);
-        return d.temp >= 60 || d.vrTemp >= 70 || d.responseTime >= 50 || (wifi >= 50 && wifi < 70);
+        return d.temp >= 60 || d.vrTemp >= 70 || d.responseTime >= 100 || (wifi >= 40 && wifi < 60);
     }
 
     private int wifiPercentValue(String wifiText) {
@@ -919,9 +864,9 @@ public class MainActivity extends Activity {
 
     private void setResponseTimeWarningColor(TextView valueView, double responseTime) {
         if (valueView == null || responseTime <= 0) return;
-        if (responseTime >= 150) {
+        if (responseTime >= 200) {
             valueView.setTextColor(Color.rgb(248, 113, 113));
-        } else if (responseTime >= 50) {
+        } else if (responseTime >= 100) {
             valueView.setTextColor(Color.rgb(251, 146, 60));
         }
     }
@@ -930,12 +875,29 @@ public class MainActivity extends Activity {
         if (valueView == null || wifiText == null) return;
         try {
             int percent = wifiPercentValue(wifiText);
-            if (percent < 50) {
+            if (percent < 40) {
                 valueView.setTextColor(Color.rgb(248, 113, 113));
-            } else if (percent < 70) {
+            } else if (percent < 60) {
                 valueView.setTextColor(Color.rgb(251, 146, 60));
             }
         } catch (Exception ignored) {}
+    }
+
+    private boolean isCriticalFanSpeed(double temp, double fanSpeed) {
+        return temp >= 70 && fanSpeed < 10;
+    }
+
+    private boolean isWarningFanSpeed(double temp, double fanSpeed) {
+        return temp >= 60 && fanSpeed < 20;
+    }
+
+    private void setFanSpeedWarningColor(TextView valueView, double temp, double fanSpeed) {
+        if (valueView == null || temp <= 0) return;
+        if (isCriticalFanSpeed(temp, fanSpeed)) {
+            valueView.setTextColor(Color.rgb(248, 113, 113));
+        } else if (isWarningFanSpeed(temp, fanSpeed)) {
+            valueView.setTextColor(Color.rgb(251, 146, 60));
+        }
     }
 
     private int addMetricRow(LinearLayout parent, int index, CardHolder holder, String l1, String l2) {
@@ -985,14 +947,6 @@ public class MainActivity extends Activity {
         return m;
     }
 
-    private int hashrateAccentColor(double hashRateGh) {
-        if (hashRateGh >= 10000) return Color.rgb(116, 93, 154);   // muted violet
-        if (hashRateGh >= 5000) return Color.rgb(154, 112, 50);    // muted amber
-        if (hashRateGh >= 2000) return Color.rgb(64, 128, 92);     // muted green
-        if (hashRateGh >= 1000) return Color.rgb(62, 105, 165);    // muted blue
-        return Color.rgb(75, 82, 94);                              // muted neutral gray
-    }
-
     private String formatBlocksFound(String block) {
         String value = (block == null || block.trim().isEmpty() || block.trim().equals("–")) ? "0" : block.trim();
         boolean found = false;
@@ -1005,20 +959,12 @@ public class MainActivity extends Activity {
         return "Blocks found: " + value + (found ? " 🏆" : "");
     }
 
-    private void addMessageCard(String msg) {
-        TextView t = text(msg, 15, MUTED, false);
-        t.setPadding(dp(14), dp(14), dp(14), dp(14));
-        t.setBackground(round(CARD, dp(18), Color.rgb(33, 58, 88)));
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2); lp.setMargins(0, 0, 0, dp(12));
-        deviceList.addView(t, lp);
-    }
-
     private void confirmRestart(CardHolder h) {
         if (h == null || h.ip == null || h.ip.isEmpty()) return;
         String name = h.deviceName == null || h.deviceName.isEmpty() ? h.ip : h.deviceName;
         LinearLayout menu = menuCard("Restart device");
 
-        TextView msg = text(name + " neu starten?", 15, MUTED, false);
+        TextView msg = text("Restart " + name + "?", 15, MUTED, false);
         msg.setGravity(Gravity.CENTER);
         msg.setPadding(dp(14), 0, dp(14), 0);
         menu.addView(msg, new LinearLayout.LayoutParams(-1, -2));
@@ -1026,7 +972,7 @@ public class MainActivity extends Activity {
         LinearLayout row = dialogActionRow(menu);
 
         final PopupWindow[] ref = new PopupWindow[1];
-        Button cancel = dialogButton("Abbrechen", Color.rgb(71, 85, 105));
+        Button cancel = dialogButton("Cancel", Color.rgb(71, 85, 105));
         cancel.setOnClickListener(v -> ref[0].dismiss());
 
         Button restart = dialogButton("Restart", Color.rgb(220, 38, 38));
@@ -1214,6 +1160,10 @@ public class MainActivity extends Activity {
     }
 
     private void showAddDialog() {
+        showAddDialog(false);
+    }
+
+    private void showAddDialog(boolean returnToDevices) {
         LinearLayout menu = menuCard("Add device");
         EditText input = new EditText(this);
         input.setHint("192.168.1.100");
@@ -1227,13 +1177,22 @@ public class MainActivity extends Activity {
 
         LinearLayout row = dialogActionRow(menu);
         final PopupWindow[] ref = new PopupWindow[1];
-        row.addView(actionButton("Cancel", Color.rgb(71, 85, 105), () -> ref[0].dismiss()), actionButtonLp(false));
+        row.addView(actionButton("Cancel", Color.rgb(71, 85, 105), () -> {
+            showMenu(null);
+        }), actionButtonLp(false));
         row.addView(actionButton("Add", GOOD, () -> {
             String ip = cleanIp(input.getText().toString());
             if (ip.isEmpty()) return;
             List<String> ips = loadIps();
-            if (!ips.contains(ip)) ips.add(ip);
-            saveIps(ips); refresh(); ref[0].dismiss();
+            if (ips.contains(ip)) {
+                Toast.makeText(this, "Device already exists", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            ips.add(ip);
+            saveIps(ips);
+            refresh();
+            if (returnToDevices) showBitaxeDialog();
+            else showMenu(null);
         }), actionButtonLp(true));
         ref[0] = showOverlayCard(menu, 300);
     }
@@ -1241,13 +1200,12 @@ public class MainActivity extends Activity {
     private void showMenu(View anchor) {
         LinearLayout menu = menuCard("");
         final PopupWindow[] ref = new PopupWindow[1];
-        menu.addView(menuActionIcon(R.drawable.ic_menu_add, "Add", () -> showAddDialog()), new LinearLayout.LayoutParams(-1, -2));
+        menu.addView(menuActionIcon(R.drawable.ic_menu_add, "Add", () -> showAddDialog(true)), new LinearLayout.LayoutParams(-1, -2));
         menu.addView(menuActionIcon(R.drawable.ic_menu_devices, "Devices", () -> showBitaxeDialog()), new LinearLayout.LayoutParams(-1, -2));
-        menu.addView(menuActionIcon(R.drawable.ic_menu_backup, "Backup", () -> showBackupDialog()), new LinearLayout.LayoutParams(-1, -2));
         menu.addView(menuActionIcon(R.drawable.ic_menu_interval, "Interval", () -> showRefreshIntervalDialog()), new LinearLayout.LayoutParams(-1, -2));
         menu.addView(menuActionIcon(R.drawable.ic_menu_display, "Display", () -> showDisplayDialog()), new LinearLayout.LayoutParams(-1, -2));
-        menu.addView(menuActionIcon(R.drawable.ic_menu_donate, "Donate", () -> showDonateDialog()), new LinearLayout.LayoutParams(-1, -2));
-        menu.addView(menuActionIcon(R.drawable.ic_menu_info, "Info", () -> showInfoDialog()), new LinearLayout.LayoutParams(-1, -2));
+        menu.addView(menuActionIcon(R.drawable.ic_menu_backup, "Backup", () -> showBackupDialog()), new LinearLayout.LayoutParams(-1, -2));
+        menu.addView(menuActionIcon(R.drawable.ic_menu_info, "About", () -> showInfoDialog()), new LinearLayout.LayoutParams(-1, -2));
         ref[0] = showOverlayCard(menu, 280);
     }
 
@@ -1257,7 +1215,7 @@ public class MainActivity extends Activity {
         addDialogMenuAction(menu, menuAction("Export", () -> { ref[0].dismiss(); startBackupExport(); }));
         addDialogMenuAction(menu, menuAction("Import", () -> { ref[0].dismiss(); startBackupImport(); }));
         LinearLayout closeRow = dialogActionRow(menu);
-        closeRow.addView(actionButton("Close", ACTION_BLUE, () -> ref[0].dismiss()), new LinearLayout.LayoutParams(-1, -2));
+        closeRow.addView(actionButton("Close", ACTION_BLUE, () -> showMenu(null)), new LinearLayout.LayoutParams(-1, -2));
         ref[0] = showOverlayCard(menu, 300);
     }
 
@@ -1417,55 +1375,58 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void showDonateDialog() {
-        LinearLayout menu = menuCard("Donate");
+    private void addStoreLinksSection(LinearLayout menu) {
+        ImageView zapstore = new ImageView(this);
+        zapstore.setImageResource(R.drawable.zapstore);
+        zapstore.setAdjustViewBounds(true);
+        zapstore.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        zapstore.setOnClickListener(v -> openExternalLink(ZAPSTORE_URL, "Could not open Zapstore"));
+        LinearLayout.LayoutParams zapstoreLp = new LinearLayout.LayoutParams(dp(190), dp(56));
+        zapstoreLp.gravity = Gravity.CENTER_HORIZONTAL;
+        zapstoreLp.setMargins(0, dp(24), 0, dp(10));
+        menu.addView(zapstore, zapstoreLp);
 
-        ImageView donateImage = new ImageView(this);
-        donateImage.setImageResource(R.drawable.donate);
-        donateImage.setAdjustViewBounds(true);
-        donateImage.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        LinearLayout.LayoutParams imageLp = new LinearLayout.LayoutParams(dp(220), dp(220));
-        imageLp.gravity = Gravity.CENTER_HORIZONTAL;
-        imageLp.setMargins(0, dp(4), 0, dp(12));
-        menu.addView(donateImage, imageLp);
+        LinearLayout footerRow = new LinearLayout(this);
+        footerRow.setGravity(Gravity.CENTER_VERTICAL);
+        footerRow.setOrientation(LinearLayout.HORIZONTAL);
+        footerRow.setPadding(dp(14), 0, dp(14), 0);
 
-        LinearLayout lightningRow = new LinearLayout(this);
-        lightningRow.setGravity(Gravity.CENTER);
-        lightningRow.setOrientation(LinearLayout.HORIZONTAL);
-
-        TextView lightningAddress = text("Donate Lightning", 15, ACCENT, false);
+        TextView lightningAddress = text("Lightning Donation", 15, ACCENT, false);
+        lightningAddress.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
         lightningAddress.setPaintFlags(lightningAddress.getPaintFlags() | android.graphics.Paint.UNDERLINE_TEXT_FLAG);
-        lightningAddress.setOnClickListener(v -> {
-            try {
-                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("https://coinos.io/zwgn")));
-            } catch (Exception e) {
-                Toast.makeText(this, "Could not open donation link", Toast.LENGTH_SHORT).show();
-            }
-        });
-        lightningRow.addView(lightningAddress, new LinearLayout.LayoutParams(-2, -2));
-        menu.addView(lightningRow, new LinearLayout.LayoutParams(-1, -2));
+        lightningAddress.setOnClickListener(v -> openExternalLink(DONATION_URL, "Could not open donation link"));
+        footerRow.addView(lightningAddress, new LinearLayout.LayoutParams(0, -2, 1));
 
-        final PopupWindow[] ref = new PopupWindow[1];
-        LinearLayout closeRow = dialogActionRow(menu);
-        closeRow.addView(actionButton("Close", ACTION_BLUE, () -> ref[0].dismiss()), new LinearLayout.LayoutParams(-1, -2));
-        ref[0] = showOverlayCard(menu, 300);
+        TextView github = text("Github", 15, ACCENT, false);
+        github.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        github.setPaintFlags(github.getPaintFlags() | android.graphics.Paint.UNDERLINE_TEXT_FLAG);
+        github.setOnClickListener(v -> openExternalLink(GITHUB_URL, "Could not open Github"));
+        footerRow.addView(github, new LinearLayout.LayoutParams(-2, -2));
+
+        menu.addView(footerRow, new LinearLayout.LayoutParams(-1, -2));
+    }
+
+    private void addVersionLine(LinearLayout menu) {
+        TextView version = text("Version " + getAppVersionName(), 15, TEXT, false);
+        version.setGravity(Gravity.CENTER);
+        version.setPadding(dp(14), dp(12), dp(14), 0);
+        menu.addView(version, new LinearLayout.LayoutParams(-1, -2));
     }
 
     private void showInfoDialog() {
         LinearLayout menu = menuCard("About BitBoard");
-        TextView msg = text("Simple Bitaxe monitoring.\n\nTrack your miners, check key stats, and manage devices in one clean view.", 15, MUTED, false);
+        TextView msg = text("Simple Bitaxe monitoring.\n\nTrack your miners, check key stats, and manage devices in one clean view.", 15, TEXT, false);
         msg.setGravity(Gravity.START);
         msg.setLineSpacing(dp(2), 1.0f);
         msg.setPadding(dp(14), 0, dp(14), 0);
         menu.addView(msg, new LinearLayout.LayoutParams(-1, -2));
 
-        TextView version = text("Version " + getAppVersionName(), 15, MUTED, false);
-        version.setGravity(Gravity.CENTER);
-        version.setPadding(dp(14), dp(12), dp(14), 0);
-        menu.addView(version, new LinearLayout.LayoutParams(-1, -2));
+        addStoreLinksSection(menu);
+        addVersionLine(menu);
+
         LinearLayout closeRow = dialogActionRow(menu);
         final PopupWindow[] ref = new PopupWindow[1];
-        closeRow.addView(actionButton("Close", ACTION_BLUE, () -> ref[0].dismiss()), new LinearLayout.LayoutParams(-1, -2));
+        closeRow.addView(actionButton("Close", ACTION_BLUE, () -> showMenu(null)), new LinearLayout.LayoutParams(-1, -2));
         ref[0] = showOverlayCard(menu, 300);
     }
 
@@ -1477,8 +1438,12 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void addMenuButton(LinearLayout menu, String label, Runnable action) {
-        menu.addView(menuAction(label, action), new LinearLayout.LayoutParams(-1, -2));
+    private void openExternalLink(String url, String errorMessage) {
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+        } catch (Exception e) {
+            Toast.makeText(this, errorMessage, Toast.LENGTH_SHORT).show();
+        }
     }
 
     private void showDisplayDialog() {
@@ -1509,7 +1474,7 @@ public class MainActivity extends Activity {
         render[0].run();
 
         LinearLayout closeRow = dialogActionRow(menu);
-        closeRow.addView(actionButton("Close", ACTION_BLUE, () -> ref[0].dismiss()), new LinearLayout.LayoutParams(-1, -2));
+        closeRow.addView(actionButton("Close", ACTION_BLUE, () -> showMenu(null)), new LinearLayout.LayoutParams(-1, -2));
         ref[0] = showOverlayCard(menu, 300);
     }
 
@@ -1543,7 +1508,7 @@ public class MainActivity extends Activity {
         addRefreshIntervalOption(menu, ref, "3 minutes", 180000L);
         addRefreshIntervalOption(menu, ref, "Pull to refresh", REFRESH_MANUAL);
         LinearLayout closeRow = dialogActionRow(menu);
-        closeRow.addView(actionButton("Close", ACTION_BLUE, () -> ref[0].dismiss()), new LinearLayout.LayoutParams(-1, -2));
+        closeRow.addView(actionButton("Close", ACTION_BLUE, () -> showMenu(null)), new LinearLayout.LayoutParams(-1, -2));
         ref[0] = showOverlayCard(menu, 300);
     }
 
@@ -1551,7 +1516,7 @@ public class MainActivity extends Activity {
         boolean selected = getRefreshIntervalMs() == intervalMs;
         addDialogMenuAction(menu, menuAction(label + (selected ? " ✓" : ""), selected ? GOOD : TEXT, () -> {
             setRefreshIntervalMs(intervalMs);
-            ref[0].dismiss();
+            showMenu(null);
         }));
     }
 
@@ -1568,7 +1533,7 @@ public class MainActivity extends Activity {
             for (String ip : ips) {
                 LinearLayout row = new LinearLayout(this);
                 row.setGravity(Gravity.CENTER_VERTICAL);
-                TextView left = text(ip, 16, TEXT, false);
+                TextView left = text(deviceMenuLabel(ip), 16, TEXT, false);
                 row.addView(left, new LinearLayout.LayoutParams(0, -2, 1));
 
                 ImageButton delete = iconButton(R.drawable.ic_device_trash, Color.rgb(220, 38, 38), "Delete");
@@ -1586,18 +1551,22 @@ public class MainActivity extends Activity {
             }
         }
         LinearLayout closeRow = dialogActionRow(menu);
-        closeRow.addView(actionButton("Close", ACTION_BLUE, () -> ref[0].dismiss()), new LinearLayout.LayoutParams(-1, -2));
+        closeRow.addView(actionButton("Add", GOOD, () -> {
+            ref[0].dismiss();
+            showAddDialog(true);
+        }), actionButtonLp(false));
+        closeRow.addView(actionButton("Close", ACTION_BLUE, () -> showMenu(null)), actionButtonLp(true));
         ref[0] = showOverlayCard(menu, 300);
     }
 
-    private void showBitaxeDeviceDialog(String ip) {
-        LinearLayout menu = menuCard(ip);
-        final PopupWindow[] ref = new PopupWindow[1];
-        addDialogMenuAction(menu, menuAction("Edit IP", () -> showEditIpDialog(ip)));
-        LinearLayout row = dialogActionRow(menu);
-        row.addView(actionButton("Delete", Color.rgb(248, 113, 113), () -> confirmDeleteIp(ip)), actionButtonLp(false));
-        row.addView(actionButton("Back", ACTION_BLUE, () -> showBitaxeDialog()), actionButtonLp(true));
-        ref[0] = showOverlayCard(menu, 300);
+    private String deviceMenuLabel(String ip) {
+        Device current = currentDevices.get(ip);
+        String name = current != null ? current.name : "";
+        if (name == null || name.trim().isEmpty() || name.equals(ip)) {
+            Device last = loadLastDevice(ip);
+            name = last != null ? last.name : "";
+        }
+        return name == null || name.trim().isEmpty() || name.equals(ip) ? ip : name.trim();
     }
 
     private void showEditIpDialog(String oldIp) {
@@ -1614,18 +1583,23 @@ public class MainActivity extends Activity {
 
         LinearLayout row = dialogActionRow(menu);
         final PopupWindow[] ref = new PopupWindow[1];
-        row.addView(actionButton("Cancel", Color.rgb(71, 85, 105), () -> ref[0].dismiss()), actionButtonLp(false));
+        row.addView(actionButton("Cancel", Color.rgb(71, 85, 105), () -> showBitaxeDialog()), actionButtonLp(false));
         row.addView(actionButton("Save", GOOD, () -> {
             String newIp = cleanIp(input.getText().toString());
             if (newIp.isEmpty()) return;
             List<String> ips = loadIps();
+            if (!newIp.equals(oldIp) && ips.contains(newIp)) {
+                Toast.makeText(this, "Device already exists", Toast.LENGTH_SHORT).show();
+                return;
+            }
             int idx = ips.indexOf(oldIp);
             if (idx >= 0) ips.set(idx, newIp);
             saveIps(ips);
             removeLastDevice(oldIp);
             CardHolder h = cards.remove(oldIp);
             if (h != null) deviceList.removeView(h.card);
-            refresh(); ref[0].dismiss();
+            refresh();
+            showBitaxeDialog();
         }), actionButtonLp(true));
         ref[0] = showOverlayCard(menu, 300);
     }
@@ -1638,7 +1612,7 @@ public class MainActivity extends Activity {
         menu.addView(msg, new LinearLayout.LayoutParams(-1, -2));
         LinearLayout row = dialogActionRow(menu);
         final PopupWindow[] ref = new PopupWindow[1];
-        row.addView(actionButton("Cancel", Color.rgb(71, 85, 105), () -> ref[0].dismiss()), actionButtonLp(false));
+        row.addView(actionButton("Cancel", Color.rgb(71, 85, 105), () -> showBitaxeDialog()), actionButtonLp(false));
         row.addView(actionButton("Delete", Color.rgb(248, 113, 113), () -> {
             List<String> ips = loadIps();
             ips.remove(ip);
@@ -1646,7 +1620,8 @@ public class MainActivity extends Activity {
             removeLastDevice(ip);
             CardHolder h = cards.remove(ip);
             if (h != null) deviceList.removeView(h.card);
-            refresh(); ref[0].dismiss();
+            refresh();
+            showBitaxeDialog();
         }), actionButtonLp(true));
         ref[0] = showOverlayCard(menu, 300);
     }
@@ -1731,7 +1706,7 @@ public class MainActivity extends Activity {
     private static double diffNumber(String val) { try { if(val == null) return 0; String raw = val.trim(); double mult = 1; if(raw.matches(".*[kK]\\s*$")) mult = 1e3; else if(raw.matches(".*[mM]\\s*$")) mult = 1e6; else if(raw.matches(".*[gG]\\s*$")) mult = 1e9; else if(raw.matches(".*[tT]\\s*$")) mult = 1e12; else if(raw.matches(".*[pP]\\s*$")) mult = 1e15; return Double.parseDouble(raw.replaceAll("[^0-9.\\-]", "")) * mult; } catch(Exception e) { return 0; } }
     private static String trim(double n) { if(Math.abs(n)>=100)return String.format(Locale.US,"%.0f",n); if(Math.abs(n)>=10)return String.format(Locale.US,"%.1f",n).replace(".0",""); return String.format(Locale.US,"%.2f",n).replaceAll("0+$","").replaceAll("\\.$",""); }
 
-    private static String formatLong(long n) { return String.format(Locale.GERMANY, "%,d", n).replace(',', '.'); }
+    private static String formatLong(long n) { return String.format(Locale.US, "%,d", n).replace(',', ' '); }
 
     private ImageButton iconButton(int iconRes, int bgColor, String description) {
         ImageButton b = new ImageButton(this);
@@ -1762,7 +1737,6 @@ public class MainActivity extends Activity {
     }
 
     private TextView text(String s, int sp, int color, boolean bold) { TextView t = new TextView(this); t.setText(s); t.setTextSize(sp); t.setTextColor(color); if(bold)t.setTypeface(Typeface.DEFAULT, Typeface.BOLD); return t; }
-    private TextView pill(String s, int color) { TextView t=text(s,11,Color.WHITE,true); t.setPadding(dp(9),dp(5),dp(9),dp(5)); t.setBackground(round(color, dp(20), 0)); return t; }
     private GradientDrawable round(int color, int radius, int stroke) { GradientDrawable g=new GradientDrawable(); g.setColor(color); g.setCornerRadius(radius); if(stroke!=0) g.setStroke(dp(1), stroke); return g; }
     private int dp(int v) { return (int)(v * getResources().getDisplayMetrics().density + 0.5f); }
 
@@ -1770,7 +1744,7 @@ public class MainActivity extends Activity {
     private static class MetricBox { LinearLayout box; TextView label, value; }
 
     private static class Device {
-        String ip, name="", model="", firmware="", chip="", block="–", bestDiff="–", sessionDiff="–", poolDiff="–", wifi="–", uptime="–", error="";
+        String ip, name="", model="", firmware="", chip="", block="–", bestDiff="–", sessionDiff="–", poolDiff="–", wifi="–", uptime="–";
         boolean online; long latency, updatedAt, sharesAccepted, sharesRejected; double hashRate, hashRate10m, responseTime, temp, vrTemp, power, voltage, frequency, coreMv, fanSpeed;
     }
 }
