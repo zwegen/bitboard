@@ -8,12 +8,16 @@ android {
         applicationId 'com.zwegen.bitboard'
         minSdk 24
         targetSdk 34
-        versionCode 634
-        versionName '0.634'
+        versionCode 636
+        versionName '0.636'
     }
 
     buildTypes {
-        release { minifyEnabled false }
+        release {
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
         debug { minifyEnabled false }
     }
 

@@ -351,8 +351,6 @@ public class MainActivity extends Activity {
         Map<String, Device> byIp = new HashMap<>();
         for (Device d : devices) byIp.put(d.ip, d);
 
-        List<String> onlineOrder = new ArrayList<>();
-        List<String> offlineOrder = new ArrayList<>();
         for (String ip : ips) {
             Device d = byIp.get(ip);
             CardHolder h = cards.get(ip);
@@ -365,7 +363,6 @@ public class MainActivity extends Activity {
             updateCard(h, display);
             setCardOnline(h, display.online);
             applyCardVisibility(h, display);
-            if (display.online) onlineOrder.add(ip); else offlineOrder.add(ip);
         }
 
         List<String> remove = new ArrayList<>();
@@ -376,7 +373,7 @@ public class MainActivity extends Activity {
             if (h != null) deviceList.removeView(h.card);
         }
 
-        reorderCards(onlineOrder, offlineOrder);
+        reorderCards(ips);
         if (updateSummary) updateSummaryFromCurrentDevices(ips);
     }
 
@@ -440,6 +437,7 @@ public class MainActivity extends Activity {
             currentDevices.remove(cardIp);
             if (old != null) deviceList.removeView(old.card);
         }
+        reorderCards(ips);
     }
 
     private Device prepareDisplayDevice(String ip, Device fetched) {
@@ -507,9 +505,8 @@ public class MainActivity extends Activity {
         }, 1000);
     }
 
-    private void reorderCards(List<String> onlineOrder, List<String> offlineOrder) {
-        for (String ip : onlineOrder) reattachCard(ip);
-        for (String ip : offlineOrder) reattachCard(ip);
+    private void reorderCards(List<String> order) {
+        for (String ip : order) reattachCard(ip);
     }
 
     private void reattachCard(String ip) {
@@ -1530,22 +1527,39 @@ public class MainActivity extends Activity {
             empty.setPadding(dp(14), dp(10), dp(14), dp(10));
             menu.addView(empty, new LinearLayout.LayoutParams(-1, -2));
         } else {
-            for (String ip : ips) {
+            for (int i = 0; i < ips.size(); i++) {
+                String ip = ips.get(i);
                 LinearLayout row = new LinearLayout(this);
                 row.setGravity(Gravity.CENTER_VERTICAL);
                 TextView left = text(deviceMenuLabel(ip), 16, TEXT, false);
                 row.addView(left, new LinearLayout.LayoutParams(0, -2, 1));
 
+                ImageButton up = iconButton(R.drawable.ic_device_arrow_up, Color.rgb(71, 85, 105), "Move up");
+                up.setEnabled(i > 0);
+                up.setAlpha(i > 0 ? 1.0f : 0.35f);
+                up.setOnClickListener(v -> moveDevice(ip, -1));
+                LinearLayout.LayoutParams ulp = new LinearLayout.LayoutParams(dp(28), dp(28));
+                ulp.setMargins(dp(6), 0, 0, 0);
+                row.addView(up, ulp);
+
+                ImageButton down = iconButton(R.drawable.ic_device_arrow_down, Color.rgb(71, 85, 105), "Move down");
+                down.setEnabled(i < ips.size() - 1);
+                down.setAlpha(i < ips.size() - 1 ? 1.0f : 0.35f);
+                down.setOnClickListener(v -> moveDevice(ip, 1));
+                LinearLayout.LayoutParams dnlp = new LinearLayout.LayoutParams(dp(28), dp(28));
+                dnlp.setMargins(dp(4), 0, 0, 0);
+                row.addView(down, dnlp);
+
                 ImageButton delete = iconButton(R.drawable.ic_device_trash, Color.rgb(220, 38, 38), "Delete");
                 delete.setOnClickListener(v -> confirmDeleteIp(ip));
                 LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(dp(28), dp(28));
-                dlp.setMargins(dp(10), 0, 0, 0);
+                dlp.setMargins(dp(6), 0, 0, 0);
                 row.addView(delete, dlp);
 
                 ImageButton edit = iconButton(R.drawable.ic_device_edit, Color.rgb(71, 85, 105), "Edit IP");
                 edit.setOnClickListener(v -> showEditIpDialog(ip));
                 LinearLayout.LayoutParams elp = new LinearLayout.LayoutParams(dp(28), dp(28));
-                elp.setMargins(dp(14), 0, 0, 0);
+                elp.setMargins(dp(8), 0, 0, 0);
                 row.addView(edit, elp);
                 addDialogDeviceRow(menu, row);
             }
@@ -1556,7 +1570,30 @@ public class MainActivity extends Activity {
             showAddDialog(true);
         }), actionButtonLp(false));
         closeRow.addView(actionButton("Close", ACTION_BLUE, () -> showMenu(null)), actionButtonLp(true));
-        ref[0] = showOverlayCard(menu, 300);
+        ref[0] = showOverlayCard(menu, 340);
+    }
+
+    private void moveDevice(String ip, int delta) {
+        List<String> ips = loadIps();
+        int from = ips.indexOf(ip);
+        int to = from + delta;
+        if (from < 0 || to < 0 || to >= ips.size()) return;
+        Collections.swap(ips, from, to);
+        saveIps(ips);
+        renderDevicesFromCurrentOrder();
+        showBitaxeDialog();
+    }
+
+    private void renderDevicesFromCurrentOrder() {
+        List<String> ips = loadIps();
+        List<Device> devices = new ArrayList<>();
+        for (String ip : ips) {
+            Device d = currentDevices.get(ip);
+            if (d == null) d = loadLastDevice(ip);
+            if (d == null) d = placeholderDevice(ip);
+            devices.add(d);
+        }
+        renderDevices(devices, ips, true);
     }
 
     private String deviceMenuLabel(String ip) {
