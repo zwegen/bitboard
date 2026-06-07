@@ -1293,6 +1293,27 @@ public class MainActivity extends Activity {
         return "bitboard-backup-" + new SimpleDateFormat("yyyyMMdd", Locale.US).format(new Date()) + ".json";
     }
 
+    private Uri backupFolderDocumentUri(Uri folderTreeUri) {
+        String documentId = DocumentsContract.getTreeDocumentId(folderTreeUri);
+        return DocumentsContract.buildDocumentUriUsingTree(folderTreeUri, documentId);
+    }
+
+    private String readableBackupFolder(Uri folderTreeUri) {
+        try {
+            String documentId = DocumentsContract.getTreeDocumentId(folderTreeUri);
+            if (documentId == null || documentId.isEmpty()) return "selected folder";
+            String path = Uri.decode(documentId);
+            int colon = path.indexOf(':');
+            if (colon >= 0) path = path.substring(colon + 1);
+            path = path.trim();
+            while (path.startsWith("/")) path = path.substring(1);
+            if (path.isEmpty()) return "selected folder";
+            return "/" + path;
+        } catch (Exception e) {
+            return "selected folder";
+        }
+    }
+
     private JSONObject createBackupJson() throws Exception {
         JSONObject root = new JSONObject();
         root.put("app", "BitBoard");
@@ -1315,7 +1336,7 @@ public class MainActivity extends Activity {
         return root;
     }
 
-    private void writeBackupToUri(Uri uri) {
+    private boolean writeBackupToUri(Uri uri) {
         try {
             OutputStream out = getContentResolver().openOutputStream(uri);
             if (out == null) throw new Exception("No output stream");
@@ -1325,17 +1346,20 @@ public class MainActivity extends Activity {
             } finally {
                 writer.close();
             }
-            Toast.makeText(this, "Backup exported", Toast.LENGTH_LONG).show();
+            return true;
         } catch (Exception e) {
             Toast.makeText(this, "Export failed", Toast.LENGTH_LONG).show();
+            return false;
         }
     }
 
     private void writeBackupToFolder(Uri folderUri) {
         try {
-            Uri target = DocumentsContract.createDocument(getContentResolver(), folderUri, "application/json", backupFilename());
+            Uri target = DocumentsContract.createDocument(getContentResolver(), backupFolderDocumentUri(folderUri), "application/json", backupFilename());
             if (target == null) throw new Exception("No backup file");
-            writeBackupToUri(target);
+            if (writeBackupToUri(target)) {
+                Toast.makeText(this, "Backup exported to: " + readableBackupFolder(folderUri), Toast.LENGTH_LONG).show();
+            }
         } catch (Exception e) {
             Toast.makeText(this, "Export failed", Toast.LENGTH_LONG).show();
         }
@@ -1538,29 +1562,21 @@ public class MainActivity extends Activity {
                 up.setEnabled(i > 0);
                 up.setAlpha(i > 0 ? 1.0f : 0.35f);
                 up.setOnClickListener(v -> moveDevice(ip, -1));
-                LinearLayout.LayoutParams ulp = new LinearLayout.LayoutParams(dp(28), dp(28));
-                ulp.setMargins(dp(6), 0, 0, 0);
-                row.addView(up, ulp);
+                row.addView(up, deviceIconButtonLp(true));
 
                 ImageButton down = iconButton(R.drawable.ic_device_arrow_down, Color.rgb(71, 85, 105), "Move down");
                 down.setEnabled(i < ips.size() - 1);
                 down.setAlpha(i < ips.size() - 1 ? 1.0f : 0.35f);
                 down.setOnClickListener(v -> moveDevice(ip, 1));
-                LinearLayout.LayoutParams dnlp = new LinearLayout.LayoutParams(dp(28), dp(28));
-                dnlp.setMargins(dp(4), 0, 0, 0);
-                row.addView(down, dnlp);
+                row.addView(down, deviceIconButtonLp(false));
 
                 ImageButton delete = iconButton(R.drawable.ic_device_trash, Color.rgb(220, 38, 38), "Delete");
                 delete.setOnClickListener(v -> confirmDeleteIp(ip));
-                LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(dp(28), dp(28));
-                dlp.setMargins(dp(6), 0, 0, 0);
-                row.addView(delete, dlp);
+                row.addView(delete, deviceIconButtonLp(false));
 
                 ImageButton edit = iconButton(R.drawable.ic_device_edit, Color.rgb(71, 85, 105), "Edit IP");
                 edit.setOnClickListener(v -> showEditIpDialog(ip));
-                LinearLayout.LayoutParams elp = new LinearLayout.LayoutParams(dp(28), dp(28));
-                elp.setMargins(dp(8), 0, 0, 0);
-                row.addView(edit, elp);
+                row.addView(edit, deviceIconButtonLp(false));
                 addDialogDeviceRow(menu, row);
             }
         }
@@ -1754,6 +1770,12 @@ public class MainActivity extends Activity {
         b.setScaleType(ImageButton.ScaleType.CENTER_INSIDE);
         b.setContentDescription(description);
         return b;
+    }
+
+    private LinearLayout.LayoutParams deviceIconButtonLp(boolean first) {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(28), dp(28));
+        lp.setMargins(first ? dp(6) : dp(5), 0, 0, 0);
+        return lp;
     }
 
     private Button dialogButton(String label, int bgColor) {
