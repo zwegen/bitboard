@@ -12,11 +12,17 @@ import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.os.Build;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.DocumentsContract;
 import android.text.InputType;
+import android.transition.AutoTransition;
+import android.transition.Transition;
+import android.transition.TransitionManager;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -27,6 +33,7 @@ import android.widget.ImageView;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.PopupWindow;
+import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -86,10 +93,12 @@ public class MainActivity extends Activity {
     private static final String ZAPSTORE_URL = "https://zapstore.dev/apps/com.zwegen.bitboard";
     private static final String GITHUB_URL = "https://github.com/zwegen/bitboard";
     private static final String DONATION_URL = "https://coinos.io/zwgn";
+    private static final long UI_ANIMATION_MS = 30L;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService executor = Executors.newFixedThreadPool(12);
     private LinearLayout deviceList;
+    private ProgressBar emptyLoadingSpinner;
     private SwipeRefreshLayout swipeRefresh;
     private TextView summaryText;
     private TextView chanceText;
@@ -216,9 +225,13 @@ public class MainActivity extends Activity {
         swipeRefresh.setOnRefreshListener(this::refresh);
         root.addView(swipeRefresh, new LinearLayout.LayoutParams(-1, 0, 1));
 
+        FrameLayout scrollHost = new FrameLayout(this);
+        swipeRefresh.addView(scrollHost, new SwipeRefreshLayout.LayoutParams(-1, -1));
+
         ScrollView scroll = new ScrollView(this);
         scroll.setVerticalScrollBarEnabled(false);
-        swipeRefresh.addView(scroll, new SwipeRefreshLayout.LayoutParams(-1, -1));
+        scrollHost.addView(scroll, new FrameLayout.LayoutParams(-1, -1));
+        swipeRefresh.setOnChildScrollUpCallback((parent, child) -> scroll.canScrollVertically(-1));
 
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
@@ -228,6 +241,12 @@ public class MainActivity extends Activity {
         deviceList = new LinearLayout(this);
         deviceList.setOrientation(LinearLayout.VERTICAL);
         content.addView(deviceList);
+
+        emptyLoadingSpinner = new ProgressBar(this, null, android.R.attr.progressBarStyleLarge);
+        emptyLoadingSpinner.setIndeterminate(true);
+        emptyLoadingSpinner.setVisibility(View.GONE);
+        FrameLayout.LayoutParams spinnerLp = new FrameLayout.LayoutParams(dp(72), dp(72), Gravity.CENTER);
+        scrollHost.addView(emptyLoadingSpinner, spinnerLp);
 
     }
 
@@ -273,6 +292,7 @@ public class MainActivity extends Activity {
             return;
         }
         refreshRunning = true;
+        updateEmptyLoadingSpinner();
         if (showUpdating && !cards.isEmpty()) summaryText.setText("Updating...");
         executor.execute(() -> {
             List<Device> devices = Collections.synchronizedList(new ArrayList<>());
@@ -295,6 +315,7 @@ public class MainActivity extends Activity {
                 refreshRunning = false;
                 nextRefreshIndex = 0;
                 renderDevices(devices, ips, true);
+                updateEmptyLoadingSpinner();
                 if (swipeRefresh != null) swipeRefresh.setRefreshing(false);
                 scheduleNextRefresh();
             });
@@ -311,13 +332,15 @@ public class MainActivity extends Activity {
         int index = nextRefreshIndex % ips.size();
         String ip = ips.get(index);
         refreshRunning = true;
+        updateEmptyLoadingSpinner();
         executor.execute(() -> {
             Device fetched = fetchDevice(ip);
             handler.post(() -> {
                 refreshRunning = false;
                 updateSingleDeviceCard(fetched, ips);
+                updateEmptyLoadingSpinner();
                 nextRefreshIndex = (index + 1) % ips.size();
-                if (nextRefreshIndex == 0) updateSummaryFromCurrentDevices(ips);
+                updateSummaryFromCurrentDevices(ips);
                 scheduleNextRefresh();
             });
         });
@@ -345,6 +368,7 @@ public class MainActivity extends Activity {
         deviceList.removeAllViews();
         summaryText.setText("No devices yet. Open the menu and add an IP.");
         chanceText.setText("");
+        updateEmptyLoadingSpinner();
     }
 
     private void renderDevices(List<Device> devices, List<String> ips, boolean updateSummary) {
@@ -375,6 +399,7 @@ public class MainActivity extends Activity {
 
         reorderCards(ips);
         if (updateSummary) updateSummaryFromCurrentDevices(ips);
+        updateEmptyLoadingSpinner();
     }
 
     private void openDeviceInBrowser(CardHolder h) {
@@ -403,6 +428,7 @@ public class MainActivity extends Activity {
             return;
         }
         refreshRunning = true;
+        updateEmptyLoadingSpinner();
         executor.execute(() -> {
             Device fetched = fetchDevice(ip);
             handler.post(() -> {
@@ -410,6 +436,7 @@ public class MainActivity extends Activity {
                 List<String> ips = loadIps();
                 updateSingleDeviceCard(fetched, ips);
                 updateSummaryFromCurrentDevices(ips);
+                updateEmptyLoadingSpinner();
                 if (getRefreshIntervalMs() != REFRESH_MANUAL) scheduleNextRefresh();
             });
         });
@@ -438,6 +465,7 @@ public class MainActivity extends Activity {
             if (old != null) deviceList.removeView(old.card);
         }
         reorderCards(ips);
+        updateEmptyLoadingSpinner();
     }
 
     private Device prepareDisplayDevice(String ip, Device fetched) {
@@ -493,6 +521,21 @@ public class MainActivity extends Activity {
             applyCardVisibility(h, h.currentDevice);
         }
         updateSummaryFromCurrentDevices(loadIps());
+        updateEmptyLoadingSpinner();
+    }
+
+    private void updateEmptyLoadingSpinner() {
+        if (emptyLoadingSpinner == null || deviceList == null) return;
+        boolean hasVisibleCard = false;
+        for (int i = 0; i < deviceList.getChildCount(); i++) {
+            View child = deviceList.getChildAt(i);
+            if (child != null && child.getVisibility() == View.VISIBLE) {
+                hasVisibleCard = true;
+                break;
+            }
+        }
+        boolean show = refreshRunning && !hasVisibleCard && !loadIps().isEmpty();
+        emptyLoadingSpinner.setVisibility(show ? View.VISIBLE : View.GONE);
     }
 
     private void pulseUpdatedCard(CardHolder h) {
@@ -596,7 +639,8 @@ public class MainActivity extends Activity {
             URL url = new URL("http://" + ip + "/api/system/info");
             c = (HttpURLConnection) url.openConnection();
             c.setUseCaches(false);
-            c.setConnectTimeout(3500); c.setReadTimeout(3500);
+            int timeoutMs = isVpnActive() ? 6000 : 4000;
+            c.setConnectTimeout(timeoutMs); c.setReadTimeout(timeoutMs);
             c.setRequestProperty("Accept", "application/json");
             c.setRequestProperty("Cache-Control", "no-cache");
             c.setRequestProperty("Connection", "close");
@@ -641,6 +685,19 @@ public class MainActivity extends Activity {
             d.online = false; d.latency = System.currentTimeMillis() - start;
         } finally { if (c != null) c.disconnect(); }
         return d;
+    }
+
+    private boolean isVpnActive() {
+        try {
+            ConnectivityManager cm = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+            if (cm == null) return false;
+            Network network = cm.getActiveNetwork();
+            if (network == null) return false;
+            NetworkCapabilities caps = cm.getNetworkCapabilities(network);
+            return caps != null && caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN);
+        } catch (Exception ignored) {
+            return false;
+        }
     }
 
     private CardHolder addDeviceCard(Device d) {
@@ -709,7 +766,7 @@ public class MainActivity extends Activity {
         i = addMetricRow(grid, i, h, "Pool Difficulty", "Fan Speed");
         addMetricRow(grid, i, h, "Wi-Fi Signal", "Uptime");
         h.expanded = areCardsExpandedByDefault();
-        applyCompactMode(h);
+        applyCompactMode(h, false);
         card.setOnClickListener(v -> toggleCompactMode(h));
 
         h.footer = text("", 11, MUTED, false);
@@ -919,12 +976,17 @@ public class MainActivity extends Activity {
     private void toggleCompactMode(CardHolder h) {
         if (h == null) return;
         h.expanded = !h.expanded;
-        applyCompactMode(h);
+        applyCompactMode(h, true);
         if (h.currentDevice != null) updateCard(h, h.currentDevice);
     }
 
-    private void applyCompactMode(CardHolder h) {
+    private void applyCompactMode(CardHolder h, boolean animate) {
         if (h == null || h.rows == null) return;
+        if (animate && h.card != null) {
+            Transition transition = new AutoTransition();
+            transition.setDuration(UI_ANIMATION_MS);
+            TransitionManager.beginDelayedTransition(h.card, transition);
+        }
         for (int i = 0; i < h.rows.length; i++) {
             if (h.rows[i] != null) h.rows[i].setVisibility(h.expanded || i < 3 ? View.VISIBLE : View.GONE);
         }
@@ -1017,6 +1079,7 @@ public class MainActivity extends Activity {
             if (activeOverlayCard != null) activeOverlay.removeView(activeOverlayCard);
             activeOverlayCard = card;
             activeOverlay.addView(card, mlp);
+            animateOverlayCard(card);
             activeOverlay.requestLayout();
             return activeOverlayPopup;
         }
@@ -1036,7 +1099,20 @@ public class MainActivity extends Activity {
         });
         pw.setOutsideTouchable(true);
         pw.showAtLocation(getWindow().getDecorView(), Gravity.CENTER, 0, 0);
+        animateOverlayCard(card);
         return pw;
+    }
+
+    private void animateOverlayCard(View card) {
+        card.setAlpha(0f);
+        card.setScaleX(0.96f);
+        card.setScaleY(0.96f);
+        card.animate()
+                .alpha(1f)
+                .scaleX(1f)
+                .scaleY(1f)
+                .setDuration(UI_ANIMATION_MS)
+                .start();
     }
 
     private void addBlurredBackground(FrameLayout overlay) {
@@ -1508,7 +1584,7 @@ public class MainActivity extends Activity {
         for (CardHolder h : cards.values()) {
             if (h == null) continue;
             h.expanded = expanded;
-            applyCompactMode(h);
+            applyCompactMode(h, true);
             if (h.currentDevice != null) updateCard(h, h.currentDevice);
         }
     }
@@ -1570,13 +1646,13 @@ public class MainActivity extends Activity {
                 down.setOnClickListener(v -> moveDevice(ip, 1));
                 row.addView(down, deviceIconButtonLp(false));
 
+                ImageButton edit = iconButton(R.drawable.ic_device_edit, ACTION_BLUE, "Edit IP");
+                edit.setOnClickListener(v -> showEditIpDialog(ip));
+                row.addView(edit, deviceIconButtonLp(false));
+
                 ImageButton delete = iconButton(R.drawable.ic_device_trash, Color.rgb(220, 38, 38), "Delete");
                 delete.setOnClickListener(v -> confirmDeleteIp(ip));
                 row.addView(delete, deviceIconButtonLp(false));
-
-                ImageButton edit = iconButton(R.drawable.ic_device_edit, Color.rgb(71, 85, 105), "Edit IP");
-                edit.setOnClickListener(v -> showEditIpDialog(ip));
-                row.addView(edit, deviceIconButtonLp(false));
                 addDialogDeviceRow(menu, row);
             }
         }
