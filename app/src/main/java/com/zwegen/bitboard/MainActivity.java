@@ -72,6 +72,7 @@ public class MainActivity extends Activity {
     private static final String KEY_ONLINE_ONLY = "online_only";
     private static final String KEY_BACKUP_TREE_URI = "backup_tree_uri";
     private static final String KEY_LAST_DEVICE_PREFIX = "last_device_";
+    private static final long RESUME_STALE_MS = 60_000L;
     private static final long DEFAULT_REFRESH_INTERVAL_MS = 120000L;
     private static final long REFRESH_MANUAL = 0L;
     private static final int REQUEST_IMPORT_BACKUP = 7102;
@@ -86,6 +87,8 @@ public class MainActivity extends Activity {
     private static final int MUTED = Color.rgb(139, 157, 185);
     private static final int ACCENT = Color.rgb(56, 189, 248);
     private static final int ACTION_BLUE = Color.rgb(37, 99, 235);
+    private static final int ACTION_VIOLET = Color.rgb(124, 58, 237);
+    private static final int ACTION_DISABLED = Color.rgb(71, 85, 105);
     private static final int GOOD = Color.rgb(34, 197, 94);
     private static final int BORDER = Color.rgb(75, 82, 94);
     private static final int ONLINE_BORDER = Color.rgb(21, 87, 45);
@@ -111,7 +114,10 @@ public class MainActivity extends Activity {
     private int pendingBackupAction = BACKUP_ACTION_NONE;
     private final Map<String, CardHolder> cards = new HashMap<>();
     private final Map<String, Device> currentDevices = new HashMap<>();
+    private long lastDeviceRefreshAt = 0;
     private boolean refreshRunning = false;
+    private boolean forceLargeRefreshSpinner = false;
+    private boolean suppressLargeRefreshSpinner = false;
     private int nextRefreshIndex = 0;
     private final Runnable refreshRunnable = new Runnable() {
         @Override public void run() {
@@ -140,12 +146,16 @@ public class MainActivity extends Activity {
     @Override protected void onResume() {
         super.onResume();
         handler.removeCallbacks(refreshRunnable);
-        renderCachedDevices();
+        if (cards.isEmpty()) renderCachedDevices();
         handler.removeCallbacks(footerTimeRunnable);
         handler.post(footerTimeRunnable);
         handler.removeCallbacks(headerSummaryRunnable);
         handler.postDelayed(headerSummaryRunnable, 21000L);
-        refresh(false);
+        if (shouldRefreshOnResume()) {
+            refresh(false);
+        } else {
+            scheduleNextRefresh();
+        }
     }
 
     @Override protected void onPause() {
@@ -222,7 +232,7 @@ public class MainActivity extends Activity {
 
         swipeRefresh = new SwipeRefreshLayout(this);
         swipeRefresh.setColorSchemeColors(ACCENT, GOOD);
-        swipeRefresh.setOnRefreshListener(this::refresh);
+        swipeRefresh.setOnRefreshListener(this::refreshFromSwipe);
         root.addView(swipeRefresh, new LinearLayout.LayoutParams(-1, 0, 1));
 
         FrameLayout scrollHost = new FrameLayout(this);
@@ -254,6 +264,10 @@ public class MainActivity extends Activity {
         refresh(true);
     }
 
+    private void refreshFromSwipe() {
+        refresh(true, true);
+    }
+
     private long getRefreshIntervalMs() {
         long interval = prefs.getLong(KEY_REFRESH_INTERVAL_MS, DEFAULT_REFRESH_INTERVAL_MS);
         if (interval == 30000L || interval == 300000L) return DEFAULT_REFRESH_INTERVAL_MS;
@@ -283,15 +297,28 @@ public class MainActivity extends Activity {
     }
 
     private void refresh(boolean showUpdating) {
+        refresh(showUpdating, false);
+    }
+
+    private void refresh(boolean showUpdating, boolean fromSwipe) {
         handler.removeCallbacks(refreshRunnable);
-        if (refreshRunning) { if (swipeRefresh != null) swipeRefresh.setRefreshing(false); return; }
+        if (refreshRunning) {
+            forceLargeRefreshSpinner = false;
+            suppressLargeRefreshSpinner = false;
+            if (swipeRefresh != null) swipeRefresh.setRefreshing(false);
+            updateEmptyLoadingSpinner();
+            return;
+        }
         List<String> ips = loadIps();
         if (ips.isEmpty()) {
+            forceLargeRefreshSpinner = false;
+            suppressLargeRefreshSpinner = false;
             clearDeviceUi();
             if (swipeRefresh != null) swipeRefresh.setRefreshing(false);
             return;
         }
         refreshRunning = true;
+        suppressLargeRefreshSpinner = fromSwipe;
         updateEmptyLoadingSpinner();
         if (showUpdating && !cards.isEmpty()) summaryText.setText("Updating...");
         executor.execute(() -> {
@@ -313,7 +340,10 @@ public class MainActivity extends Activity {
             }
             handler.post(() -> {
                 refreshRunning = false;
+                forceLargeRefreshSpinner = false;
+                suppressLargeRefreshSpinner = false;
                 nextRefreshIndex = 0;
+                lastDeviceRefreshAt = System.currentTimeMillis();
                 renderDevices(devices, ips, true);
                 updateEmptyLoadingSpinner();
                 if (swipeRefresh != null) swipeRefresh.setRefreshing(false);
@@ -337,6 +367,7 @@ public class MainActivity extends Activity {
             Device fetched = fetchDevice(ip);
             handler.post(() -> {
                 refreshRunning = false;
+                lastDeviceRefreshAt = System.currentTimeMillis();
                 updateSingleDeviceCard(fetched, ips);
                 updateEmptyLoadingSpinner();
                 nextRefreshIndex = (index + 1) % ips.size();
@@ -362,6 +393,12 @@ public class MainActivity extends Activity {
         renderDevices(devices, ips, false);
     }
 
+    private boolean shouldRefreshOnResume() {
+        List<String> ips = loadIps();
+        if (ips.isEmpty()) return false;
+        return lastDeviceRefreshAt <= 0 || System.currentTimeMillis() - lastDeviceRefreshAt >= RESUME_STALE_MS;
+    }
+
     private void clearDeviceUi() {
         cards.clear();
         currentDevices.clear();
@@ -375,6 +412,8 @@ public class MainActivity extends Activity {
         Map<String, Device> byIp = new HashMap<>();
         for (Device d : devices) byIp.put(d.ip, d);
 
+        List<String> onlineOrder = new ArrayList<>();
+        List<String> offlineOrder = new ArrayList<>();
         for (String ip : ips) {
             Device d = byIp.get(ip);
             CardHolder h = cards.get(ip);
@@ -387,6 +426,7 @@ public class MainActivity extends Activity {
             updateCard(h, display);
             setCardOnline(h, display.online);
             applyCardVisibility(h, display);
+            if (display.online) onlineOrder.add(ip); else offlineOrder.add(ip);
         }
 
         List<String> remove = new ArrayList<>();
@@ -397,7 +437,7 @@ public class MainActivity extends Activity {
             if (h != null) deviceList.removeView(h.card);
         }
 
-        reorderCards(ips);
+        reorderCards(onlineOrder, offlineOrder);
         if (updateSummary) updateSummaryFromCurrentDevices(ips);
         updateEmptyLoadingSpinner();
     }
@@ -434,6 +474,7 @@ public class MainActivity extends Activity {
             handler.post(() -> {
                 refreshRunning = false;
                 List<String> ips = loadIps();
+                lastDeviceRefreshAt = System.currentTimeMillis();
                 updateSingleDeviceCard(fetched, ips);
                 updateSummaryFromCurrentDevices(ips);
                 updateEmptyLoadingSpinner();
@@ -464,7 +505,7 @@ public class MainActivity extends Activity {
             currentDevices.remove(cardIp);
             if (old != null) deviceList.removeView(old.card);
         }
-        reorderCards(ips);
+        reorderCardsByOnlineState(ips);
         updateEmptyLoadingSpinner();
     }
 
@@ -534,7 +575,7 @@ public class MainActivity extends Activity {
                 break;
             }
         }
-        boolean show = refreshRunning && !hasVisibleCard && !loadIps().isEmpty();
+        boolean show = refreshRunning && !suppressLargeRefreshSpinner && (forceLargeRefreshSpinner || !hasVisibleCard) && !loadIps().isEmpty();
         emptyLoadingSpinner.setVisibility(show ? View.VISIBLE : View.GONE);
     }
 
@@ -548,8 +589,19 @@ public class MainActivity extends Activity {
         }, 1000);
     }
 
-    private void reorderCards(List<String> order) {
-        for (String ip : order) reattachCard(ip);
+    private void reorderCardsByOnlineState(List<String> order) {
+        List<String> onlineOrder = new ArrayList<>();
+        List<String> offlineOrder = new ArrayList<>();
+        for (String ip : order) {
+            Device d = currentDevices.get(ip);
+            if (d != null && d.online) onlineOrder.add(ip); else offlineOrder.add(ip);
+        }
+        reorderCards(onlineOrder, offlineOrder);
+    }
+
+    private void reorderCards(List<String> onlineOrder, List<String> offlineOrder) {
+        for (String ip : onlineOrder) reattachCard(ip);
+        for (String ip : offlineOrder) reattachCard(ip);
     }
 
     private void reattachCard(String ip) {
@@ -660,8 +712,10 @@ public class MainActivity extends Activity {
             d.latency = System.currentTimeMillis() - start;
             d.name = str(j, "hostname", ip);
             d.model = str(j, "deviceModel", str(j, "ASICModel", ""));
-            d.firmware = str(j, "axeOSVersion", str(j, "version", ""));
+            d.axeOSVersion = str(j, "axeOSVersion", "");
+            d.firmware = d.axeOSVersion.isEmpty() ? str(j, "version", "") : d.axeOSVersion;
             d.chip = str(j, "ASICModel", "");
+            d.miningPaused = j.optBoolean("miningPaused", false);
             d.hashRate = num(j, "hashRate");
             d.hashRate10m = numAny(j, "hashRate_10m", "hashRate10m", "hashRate10min", "hashRate10Min", "hashRateAvg10m", "hashRateAvg10min");
             d.responseTime = numAny(j, "responseTime", "lastpingrtt");
@@ -731,23 +785,21 @@ public class MainActivity extends Activity {
         h.sub.setGravity(Gravity.START);
         titleBox.addView(h.name);
         titleBox.addView(h.sub);
+        h.pauseResume = iconButton(R.drawable.ic_card_pause, ACTION_VIOLET, "Pause mining");
+        h.pauseResume.setOnClickListener(v -> togglePauseResume(h));
+        head.addView(h.pauseResume, deviceIconButtonLp());
+
         ImageButton open = iconButton(R.drawable.ic_open_browser, Color.rgb(100, 116, 139), "Open");
         open.setOnClickListener(v -> openDeviceInBrowser(h));
-        LinearLayout.LayoutParams olp = new LinearLayout.LayoutParams(dp(28), dp(28));
-        olp.setMargins(dp(8), 0, 0, 0);
-        head.addView(open, olp);
+        head.addView(open, deviceIconButtonLp());
 
         ImageButton refresh = iconButton(R.drawable.ic_card_refresh, ACTION_BLUE, "Refresh");
         refresh.setOnClickListener(v -> refreshDeviceNow(h));
-        LinearLayout.LayoutParams flp = new LinearLayout.LayoutParams(dp(28), dp(28));
-        flp.setMargins(dp(14), 0, 0, 0);
-        head.addView(refresh, flp);
+        head.addView(refresh, deviceIconButtonLp());
 
         ImageButton restart = iconButton(R.drawable.ic_card_restart, Color.rgb(220, 38, 38), "Restart");
         restart.setOnClickListener(v -> confirmRestart(h));
-        LinearLayout.LayoutParams rlp = new LinearLayout.LayoutParams(dp(28), dp(28));
-        rlp.setMargins(dp(14), 0, 0, 0);
-        head.addView(restart, rlp);
+        head.addView(restart, deviceIconButtonLp());
 
         LinearLayout grid = new LinearLayout(this);
         grid.setOrientation(LinearLayout.VERTICAL);
@@ -785,6 +837,7 @@ public class MainActivity extends Activity {
         h.footer.setText(formatFooter(d));
         setCardOnline(h, d.online);
         h.name.setTextColor(getDeviceTitleColor(d));
+        updatePauseResumeButton(h);
         String[] labels;
         String[] vals;
         if (h.expanded) {
@@ -1072,6 +1125,91 @@ public class MainActivity extends Activity {
         });
     }
 
+    private void togglePauseResume(CardHolder h) {
+        if (h == null || h.currentDevice == null || !supportsPauseResume(h.currentDevice) || h.pauseResumeBusy) return;
+        boolean resume = h.currentDevice.miningPaused;
+        h.pauseResumeBusy = true;
+        updatePauseResumeButton(h);
+        executor.execute(() -> {
+            boolean ok = postSystemAction(h.ip, resume ? "resume" : "pause");
+            Device fetched = ok ? fetchDevice(h.ip) : null;
+            handler.post(() -> {
+                h.pauseResumeBusy = false;
+                if (fetched != null) {
+                    updateSingleDeviceCard(fetched, loadIps());
+                    updateSummaryFromCurrentDevices(loadIps());
+                } else {
+                    updatePauseResumeButton(h);
+                }
+                Toast.makeText(this, ok ? (resume ? "Resume sent" : "Pause sent") : "Pause/Resume failed", Toast.LENGTH_SHORT).show();
+            });
+        });
+    }
+
+    private boolean postSystemAction(String ip, String action) {
+        HttpURLConnection c = null;
+        try {
+            URL url = new URL("http://" + ip + "/api/system/" + action);
+            c = (HttpURLConnection) url.openConnection();
+            c.setConnectTimeout(5000);
+            c.setReadTimeout(5000);
+            c.setRequestMethod("POST");
+            c.setDoOutput(true);
+            c.getOutputStream().write(new byte[0]);
+            int code = c.getResponseCode();
+            return code >= 200 && code < 300;
+        } catch (Exception ignored) {
+            return false;
+        } finally {
+            if (c != null) c.disconnect();
+        }
+    }
+
+    private void updatePauseResumeButton(CardHolder h) {
+        if (h == null || h.pauseResume == null) return;
+        Device d = h.currentDevice;
+        if (!supportsPauseResume(d)) {
+            h.pauseResume.setVisibility(View.GONE);
+            return;
+        }
+        h.pauseResume.setVisibility(View.VISIBLE);
+        boolean paused = d.miningPaused;
+        h.pauseResume.setImageResource(paused ? R.drawable.ic_card_play : R.drawable.ic_card_pause);
+        h.pauseResume.setContentDescription(paused ? "Resume mining" : "Pause mining");
+        h.pauseResume.setEnabled(!h.pauseResumeBusy);
+        h.pauseResume.setAlpha(h.pauseResumeBusy ? 0.62f : 1.0f);
+        h.pauseResume.setBackground(round(h.pauseResumeBusy ? ACTION_DISABLED : ACTION_VIOLET, dp(14), 0));
+    }
+
+    private boolean supportsPauseResume(Device d) {
+        return d != null && d.online && !isNerdQaxeDevice(d) && isAxeOsAtLeast(d.axeOSVersion, 2, 14, 0);
+    }
+
+    private boolean isNerdQaxeDevice(Device d) {
+        String text = ((d.name == null ? "" : d.name) + " " + (d.model == null ? "" : d.model) + " " + (d.chip == null ? "" : d.chip)).toLowerCase(Locale.US);
+        return text.contains("nerdqaxe") || text.contains("nerdqaxeplus") || text.contains("nerdqaxe+");
+    }
+
+    private boolean isAxeOsAtLeast(String version, int wantMajor, int wantMinor, int wantPatch) {
+        if (version == null || version.trim().isEmpty()) return false;
+        Matcher m = Pattern.compile("(\\d+)\\.(\\d+)(?:\\.(\\d+))?").matcher(version);
+        if (!m.find()) return false;
+        int major = parseInt(m.group(1));
+        int minor = parseInt(m.group(2));
+        int patch = m.group(3) == null ? 0 : parseInt(m.group(3));
+        if (major != wantMajor) return major > wantMajor;
+        if (minor != wantMinor) return minor > wantMinor;
+        return patch >= wantPatch;
+    }
+
+    private int parseInt(String value) {
+        try {
+            return Integer.parseInt(value);
+        } catch (Exception ignored) {
+            return 0;
+        }
+    }
+
     private PopupWindow showOverlayCard(LinearLayout card, int widthDp) {
         card.setClickable(true);
         FrameLayout.LayoutParams mlp = new FrameLayout.LayoutParams(dp(widthDp), ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER);
@@ -1182,16 +1320,26 @@ public class MainActivity extends Activity {
         return row;
     }
 
-    private LinearLayout toggleMenuAction(String label, Runnable action) {
+    private LinearLayout statusMenuAction(String label, int iconRes, boolean active, Runnable action) {
         LinearLayout row = new LinearLayout(this);
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setOnClickListener(v -> action.run());
         TextView left = text(label, 17, TEXT, false);
         row.addView(left, new LinearLayout.LayoutParams(0, -2, 1));
-        TextView right = text("☐", 18, MUTED, true);
-        right.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
-        row.addView(right, new LinearLayout.LayoutParams(dp(44), -2));
+        ImageView right = new ImageView(this);
+        right.setImageResource(iconRes);
+        right.setColorFilter(active ? GOOD : MUTED);
+        right.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        LinearLayout.LayoutParams iconLp = new LinearLayout.LayoutParams(dp(18), dp(18));
+        iconLp.setMargins(dp(26), 0, 0, 0);
+        row.addView(right, iconLp);
         return row;
+    }
+
+    private void setStatusIcon(LinearLayout row, int iconRes, boolean active) {
+        ImageView status = (ImageView) row.getChildAt(1);
+        status.setImageResource(iconRes);
+        status.setColorFilter(active ? GOOD : MUTED);
     }
 
     private Button actionButton(String label, int bgColor, Runnable action) {
@@ -1546,27 +1694,23 @@ public class MainActivity extends Activity {
     private void showDisplayDialog() {
         LinearLayout menu = menuCard("Display");
         final PopupWindow[] ref = new PopupWindow[1];
-        final TextView[] compactItem = new TextView[1];
-        final TextView[] expandedItem = new TextView[1];
+        final LinearLayout[] compactItem = new LinearLayout[1];
+        final LinearLayout[] expandedItem = new LinearLayout[1];
         final LinearLayout[] onlineOnlyItem = new LinearLayout[1];
         Runnable[] render = new Runnable[1];
         render[0] = () -> {
             boolean expandedSelected = areAllCardsExpanded();
             boolean onlineOnly = isOnlineOnly();
-            compactItem[0].setText("Compact" + (!expandedSelected ? " ✓" : ""));
-            compactItem[0].setTextColor(!expandedSelected ? GOOD : TEXT);
-            expandedItem[0].setText("Expanded" + (expandedSelected ? " ✓" : ""));
-            expandedItem[0].setTextColor(expandedSelected ? GOOD : TEXT);
-            TextView box = (TextView) onlineOnlyItem[0].getChildAt(1);
-            box.setText(onlineOnly ? "☑" : "☐");
-            box.setTextColor(onlineOnly ? GOOD : MUTED);
+            setStatusIcon(compactItem[0], !expandedSelected ? R.drawable.ic_status_radio_on : R.drawable.ic_status_radio_off, !expandedSelected);
+            setStatusIcon(expandedItem[0], expandedSelected ? R.drawable.ic_status_radio_on : R.drawable.ic_status_radio_off, expandedSelected);
+            setStatusIcon(onlineOnlyItem[0], onlineOnly ? R.drawable.ic_status_checkbox_on : R.drawable.ic_status_checkbox_off, onlineOnly);
         };
 
-        compactItem[0] = menuAction("Compact", () -> { setAllCardsExpanded(false); render[0].run(); });
-        expandedItem[0] = menuAction("Expanded", () -> { setAllCardsExpanded(true); render[0].run(); });
-        onlineOnlyItem[0] = toggleMenuAction("Online only", () -> { setOnlineOnly(!isOnlineOnly()); render[0].run(); });
-        addDialogMenuAction(menu, compactItem[0]);
-        addDialogMenuAction(menu, expandedItem[0]);
+        compactItem[0] = statusMenuAction("Compact", R.drawable.ic_status_radio_off, false, () -> { setAllCardsExpanded(false); render[0].run(); });
+        expandedItem[0] = statusMenuAction("Expanded", R.drawable.ic_status_radio_off, false, () -> { setAllCardsExpanded(true); render[0].run(); });
+        onlineOnlyItem[0] = statusMenuAction("Online only", R.drawable.ic_status_checkbox_off, false, () -> { setOnlineOnly(!isOnlineOnly()); render[0].run(); });
+        addDialogDeviceRow(menu, compactItem[0]);
+        addDialogDeviceRow(menu, expandedItem[0]);
         addDialogDeviceRow(menu, onlineOnlyItem[0]);
         render[0].run();
 
@@ -1611,10 +1755,11 @@ public class MainActivity extends Activity {
 
     private void addRefreshIntervalOption(LinearLayout menu, PopupWindow[] ref, String label, long intervalMs) {
         boolean selected = getRefreshIntervalMs() == intervalMs;
-        addDialogMenuAction(menu, menuAction(label + (selected ? " ✓" : ""), selected ? GOOD : TEXT, () -> {
+        LinearLayout row = statusMenuAction(label, selected ? R.drawable.ic_status_radio_on : R.drawable.ic_status_radio_off, selected, () -> {
             setRefreshIntervalMs(intervalMs);
             showMenu(null);
-        }));
+        });
+        addDialogDeviceRow(menu, row);
     }
 
     private void showBitaxeDialog() {
@@ -1848,10 +1993,14 @@ public class MainActivity extends Activity {
         return b;
     }
 
-    private LinearLayout.LayoutParams deviceIconButtonLp(boolean first) {
+    private LinearLayout.LayoutParams deviceIconButtonLp() {
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(28), dp(28));
-        lp.setMargins(first ? dp(6) : dp(5), 0, 0, 0);
+        lp.setMargins(dp(6), 0, 0, 0);
         return lp;
+    }
+
+    private LinearLayout.LayoutParams deviceIconButtonLp(boolean ignored) {
+        return deviceIconButtonLp();
     }
 
     private Button dialogButton(String label, int bgColor) {
@@ -1875,11 +2024,11 @@ public class MainActivity extends Activity {
     private GradientDrawable round(int color, int radius, int stroke) { GradientDrawable g=new GradientDrawable(); g.setColor(color); g.setCornerRadius(radius); if(stroke!=0) g.setStroke(dp(1), stroke); return g; }
     private int dp(int v) { return (int)(v * getResources().getDisplayMetrics().density + 0.5f); }
 
-    private static class CardHolder { LinearLayout card, body; LinearLayout[] rows; TextView name, sub, footer; TextView[] labels, values; String ip = "", deviceName = ""; boolean expanded = false; Device currentDevice = null; }
+    private static class CardHolder { LinearLayout card, body; LinearLayout[] rows; TextView name, sub, footer; TextView[] labels, values; ImageButton pauseResume; String ip = "", deviceName = ""; boolean expanded = false, pauseResumeBusy = false; Device currentDevice = null; }
     private static class MetricBox { LinearLayout box; TextView label, value; }
 
     private static class Device {
-        String ip, name="", model="", firmware="", chip="", block="–", bestDiff="–", sessionDiff="–", poolDiff="–", wifi="–", uptime="–";
-        boolean online; long latency, updatedAt, sharesAccepted, sharesRejected; double hashRate, hashRate10m, responseTime, temp, vrTemp, power, voltage, frequency, coreMv, fanSpeed;
+        String ip, name="", model="", firmware="", axeOSVersion="", chip="", block="–", bestDiff="–", sessionDiff="–", poolDiff="–", wifi="–", uptime="–";
+        boolean online, miningPaused; long latency, updatedAt, sharesAccepted, sharesRejected; double hashRate, hashRate10m, responseTime, temp, vrTemp, power, voltage, frequency, coreMv, fanSpeed;
     }
 }

@@ -35,6 +35,6 @@ The app icon is stored in [`metadata/icon/bitboard.png`](metadata/icon/bitboard.
 
 Release APKs are signed with the BitBoard release key. The signing key and passwords are not part of this repository.
 
-Latest release: `v0.642`
+Latest release: `v0.643`
 
 See [`CHANGELOG.md`](CHANGELOG.md) for release details.
