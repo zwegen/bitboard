@@ -87,7 +87,7 @@ public class MainActivity extends Activity {
     private static final int MUTED = Color.rgb(139, 157, 185);
     private static final int ACCENT = Color.rgb(56, 189, 248);
     private static final int ACTION_BLUE = Color.rgb(37, 99, 235);
-    private static final int ACTION_VIOLET = Color.rgb(124, 58, 237);
+    private static final int ACTION_AMBER = Color.rgb(245, 158, 11);
     private static final int ACTION_DISABLED = Color.rgb(71, 85, 105);
     private static final int GOOD = Color.rgb(34, 197, 94);
     private static final int BORDER = Color.rgb(75, 82, 94);
@@ -615,7 +615,7 @@ public class MainActivity extends Activity {
     private void setSummaryText(int online, int total, double hash, double power) {
         String summary = online + "/" + total + " online";
         if (online > 0) {
-            summary += " · " + fmtHash(hash) + " · " + (power > 0 ? one(power) + " W" : "–");
+            summary += " · " + fmtTopHash(hash) + " · " + (power > 0 ? zer(power) + " W" : "–");
             summaryText.setTextColor(ACCENT);
         } else {
             summaryText.setTextColor(MUTED);
@@ -785,7 +785,7 @@ public class MainActivity extends Activity {
         h.sub.setGravity(Gravity.START);
         titleBox.addView(h.name);
         titleBox.addView(h.sub);
-        h.pauseResume = iconButton(R.drawable.ic_card_pause, ACTION_VIOLET, "Pause mining");
+        h.pauseResume = iconButton(R.drawable.ic_card_pause, ACTION_AMBER, "Pause mining");
         h.pauseResume.setOnClickListener(v -> togglePauseResume(h));
         head.addView(h.pauseResume, deviceIconButtonLp());
 
@@ -838,6 +838,7 @@ public class MainActivity extends Activity {
         setCardOnline(h, d.online);
         h.name.setTextColor(getDeviceTitleColor(d));
         updatePauseResumeButton(h);
+        String sharesLabel = sharesLabel(h, d);
         String[] labels;
         String[] vals;
         if (h.expanded) {
@@ -847,7 +848,7 @@ public class MainActivity extends Activity {
                 "Temperature", "VR Temperature",
                 "Power", "Voltage",
                 "Frequency", "Core Voltage",
-                "Shares", "Pool Difficulty",
+                sharesLabel, "Pool Difficulty",
                 "Response Time", "Wi-Fi Signal",
                 "Fan Speed", "Uptime"
             };
@@ -865,7 +866,7 @@ public class MainActivity extends Activity {
             labels = new String[] {
                 "Hashrate", "Session Difficulty",
                 "Temperature", "Power",
-                "Shares", "Response Time",
+                sharesLabel, "Response Time",
                 "Hashrate 10 min", "Best Difficulty",
                 "VR Temperature", "Voltage",
                 "Frequency", "Core Voltage",
@@ -904,6 +905,15 @@ public class MainActivity extends Activity {
         if (session > 0 && best > 0 && session >= best) {
             h.values[h.expanded ? 3 : 1].setTextColor(Color.rgb(34, 197, 94));
         }
+    }
+
+    private String sharesLabel(CardHolder h, Device d) {
+        long delta = 0;
+        if (h != null && d != null && d.online && h.lastSharesAccepted >= 0) {
+            delta = d.sharesAccepted - h.lastSharesAccepted;
+        }
+        if (h != null && d != null && d.online) h.lastSharesAccepted = d.sharesAccepted;
+        return delta > 0 ? "Shares (+" + formatLong(delta) + ")" : "Shares";
     }
 
     private void updateFooterTimes() {
@@ -1178,7 +1188,7 @@ public class MainActivity extends Activity {
         h.pauseResume.setContentDescription(paused ? "Resume mining" : "Pause mining");
         h.pauseResume.setEnabled(!h.pauseResumeBusy);
         h.pauseResume.setAlpha(h.pauseResumeBusy ? 0.62f : 1.0f);
-        h.pauseResume.setBackground(round(h.pauseResumeBusy ? ACTION_DISABLED : ACTION_VIOLET, dp(14), 0));
+        h.pauseResume.setBackground(round(h.pauseResumeBusy ? ACTION_DISABLED : (paused ? GOOD : ACTION_AMBER), dp(14), 0));
     }
 
     private boolean supportsPauseResume(Device d) {
@@ -1974,6 +1984,8 @@ public class MainActivity extends Activity {
     private static String one(double v) { return String.format(Locale.US, "%.1f", v); }
     private static String zer(double v) { return String.format(Locale.US, "%.0f", v); }
     private static String fmtHash(double v) { if(v<=0) return "–"; if(v>1_000_000_000) return String.format(Locale.US,"%.2f GH/s",v/1_000_000_000); if(v>1_000_000) return String.format(Locale.US,"%.2f MH/s",v/1_000_000); return zer(v)+" GH/s"; }
+    private static String fmtTopHash(double v) { if(v<=0) return "–"; return groupThousands(Math.round(v)) + " GH/s"; }
+    private static String groupThousands(long v) { return String.format(Locale.US, "%,d", v).replace(',', ' '); }
     private static String wifiPercent(double rssi) { if(rssi == 0) return "–"; int p = Math.max(0, Math.min(100, (int)Math.round(((rssi + 90) / 60.0) * 100))); return p + "%"; }
     private static String fmtUptime(long s) { if(s<=0) return "–"; long d=s/86400,h=(s%86400)/3600,m=(s%3600)/60; if(d>0)return d+"d "+h+"h"; if(h>0)return h+"h "+m+"m"; return m+"m"; }
     private static String fmtDiff(String val) { try { double n=diffNumber(val); if(n == 0 && (val == null || !val.matches(".*[0-9].*"))) return val == null ? "–" : val; double a=Math.abs(n); if(a>=1e15)return trim(n/1e15)+"P"; if(a>=1e12)return trim(n/1e12)+"T"; if(a>=1e9)return trim(n/1e9)+"G"; if(a>=1e6)return trim(n/1e6)+"M"; if(a>=1e3)return trim(n/1e3)+"K"; return trim(n); } catch(Exception e) { return val == null ? "–" : val; } }
@@ -1995,7 +2007,7 @@ public class MainActivity extends Activity {
 
     private LinearLayout.LayoutParams deviceIconButtonLp() {
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(28), dp(28));
-        lp.setMargins(dp(6), 0, 0, 0);
+        lp.setMargins(dp(8), 0, 0, 0);
         return lp;
     }
 
@@ -2024,7 +2036,7 @@ public class MainActivity extends Activity {
     private GradientDrawable round(int color, int radius, int stroke) { GradientDrawable g=new GradientDrawable(); g.setColor(color); g.setCornerRadius(radius); if(stroke!=0) g.setStroke(dp(1), stroke); return g; }
     private int dp(int v) { return (int)(v * getResources().getDisplayMetrics().density + 0.5f); }
 
-    private static class CardHolder { LinearLayout card, body; LinearLayout[] rows; TextView name, sub, footer; TextView[] labels, values; ImageButton pauseResume; String ip = "", deviceName = ""; boolean expanded = false, pauseResumeBusy = false; Device currentDevice = null; }
+    private static class CardHolder { LinearLayout card, body; LinearLayout[] rows; TextView name, sub, footer; TextView[] labels, values; ImageButton pauseResume; String ip = "", deviceName = ""; long lastSharesAccepted = -1; boolean expanded = false, pauseResumeBusy = false; Device currentDevice = null; }
     private static class MetricBox { LinearLayout box; TextView label, value; }
 
     private static class Device {
