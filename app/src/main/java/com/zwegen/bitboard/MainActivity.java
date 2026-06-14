@@ -829,6 +829,10 @@ public class MainActivity extends Activity {
     }
 
     private void updateCard(CardHolder h, Device d) {
+        updateCard(h, d, false);
+    }
+
+    private void updateCard(CardHolder h, Device d, boolean preserveSharesLabel) {
         h.currentDevice = d;
         h.ip = d.ip;
         h.deviceName = d.name;
@@ -838,7 +842,9 @@ public class MainActivity extends Activity {
         setCardOnline(h, d.online);
         h.name.setTextColor(getDeviceTitleColor(d));
         updatePauseResumeButton(h);
-        String sharesLabel = sharesLabel(h, d);
+        String sharesLabel = preserveSharesLabel && h != null && h.sharesMetricLabel != null
+            ? h.sharesMetricLabel
+            : sharesLabel(h, d);
         String[] labels;
         String[] vals;
         if (h.expanded) {
@@ -908,12 +914,15 @@ public class MainActivity extends Activity {
     }
 
     private String sharesLabel(CardHolder h, Device d) {
-        long delta = 0;
-        if (h != null && d != null && d.online && h.lastSharesAccepted >= 0) {
-            delta = d.sharesAccepted - h.lastSharesAccepted;
+        if (h == null) return "Shares";
+        if (d != null && d.online) {
+            long delta = h.lastSharesAccepted >= 0 ? d.sharesAccepted - h.lastSharesAccepted : 0;
+            h.lastSharesAccepted = d.sharesAccepted;
+            h.sharesMetricLabel = delta > 0 ? "Shares (+" + formatLong(delta) + ")" : "Shares";
+            return h.sharesMetricLabel;
         }
-        if (h != null && d != null && d.online) h.lastSharesAccepted = d.sharesAccepted;
-        return delta > 0 ? "Shares (+" + formatLong(delta) + ")" : "Shares";
+        h.sharesMetricLabel = "Shares";
+        return "Shares";
     }
 
     private void updateFooterTimes() {
@@ -1040,7 +1049,7 @@ public class MainActivity extends Activity {
         if (h == null) return;
         h.expanded = !h.expanded;
         applyCompactMode(h, true);
-        if (h.currentDevice != null) updateCard(h, h.currentDevice);
+        if (h.currentDevice != null) updateCard(h, h.currentDevice, true);
     }
 
     private void applyCompactMode(CardHolder h, boolean animate) {
@@ -2036,7 +2045,7 @@ public class MainActivity extends Activity {
     private GradientDrawable round(int color, int radius, int stroke) { GradientDrawable g=new GradientDrawable(); g.setColor(color); g.setCornerRadius(radius); if(stroke!=0) g.setStroke(dp(1), stroke); return g; }
     private int dp(int v) { return (int)(v * getResources().getDisplayMetrics().density + 0.5f); }
 
-    private static class CardHolder { LinearLayout card, body; LinearLayout[] rows; TextView name, sub, footer; TextView[] labels, values; ImageButton pauseResume; String ip = "", deviceName = ""; long lastSharesAccepted = -1; boolean expanded = false, pauseResumeBusy = false; Device currentDevice = null; }
+    private static class CardHolder { LinearLayout card, body; LinearLayout[] rows; TextView name, sub, footer; TextView[] labels, values; ImageButton pauseResume; String ip = "", deviceName = ""; long lastSharesAccepted = -1; String sharesMetricLabel = "Shares"; boolean expanded = false, pauseResumeBusy = false; Device currentDevice = null; }
     private static class MetricBox { LinearLayout box; TextView label, value; }
 
     private static class Device {

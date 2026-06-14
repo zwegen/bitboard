@@ -8,8 +8,8 @@ android {
         applicationId 'com.zwegen.bitboard'
         minSdk 24
         targetSdk 34
-        versionCode 645
-        versionName '0.645'
+        versionCode 646
+        versionName '0.646'
     }
 
     buildTypes {
