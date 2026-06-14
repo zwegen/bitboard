@@ -1,0 +1,19 @@
+{
+    "logs": [
+        {
+            "outputFile": "com.zwegen.bitboard.app-mergeDebugResources-4:/values-is/values-is.xml",
+            "map": [
+                {
+                    "source": "/home/zwegen/.gradle/caches/transforms-3/fe5c0d66bf6a7e83477779eb69918888/transformed/core-1.1.0/res/values-is/values-is.xml",
+                    "from": {
+                        "startLines": "2",
+                        "startColumns": "4",
+                        "startOffsets": "55",
+                        "endColumns": "100",
+                        "endOffsets": "151"
+                    }
+                }
+            ]
+        }
+    ]
+}

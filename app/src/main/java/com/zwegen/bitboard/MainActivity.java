@@ -35,6 +35,7 @@ import android.widget.LinearLayout;
 import android.widget.PopupWindow;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
+import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -70,6 +71,7 @@ public class MainActivity extends Activity {
     private static final String KEY_REFRESH_INTERVAL_MS = "refresh_interval_ms";
     private static final String KEY_CARDS_EXPANDED = "cards_expanded";
     private static final String KEY_ONLINE_ONLY = "online_only";
+    private static final String KEY_POWER_PLUGS = "power_plugs";
     private static final String KEY_BACKUP_TREE_URI = "backup_tree_uri";
     private static final String KEY_LAST_DEVICE_PREFIX = "last_device_";
     private static final long RESUME_STALE_MS = 60_000L;
@@ -403,7 +405,7 @@ public class MainActivity extends Activity {
         cards.clear();
         currentDevices.clear();
         deviceList.removeAllViews();
-        summaryText.setText("No devices yet. Open the menu and add an IP.");
+        summaryText.setText("No miners yet. Open Miners and add an IP.");
         chanceText.setText("");
         updateEmptyLoadingSpinner();
     }
@@ -1404,7 +1406,7 @@ public class MainActivity extends Activity {
     }
 
     private void showAddDialog(boolean returnToDevices) {
-        LinearLayout menu = menuCard("Add device");
+        LinearLayout menu = menuCard("Add miner");
         EditText input = new EditText(this);
         input.setHint("192.168.1.100");
         input.setHintTextColor(MUTED);
@@ -1425,7 +1427,7 @@ public class MainActivity extends Activity {
             if (ip.isEmpty()) return;
             List<String> ips = loadIps();
             if (ips.contains(ip)) {
-                Toast.makeText(this, "Device already exists", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "Miner already exists", Toast.LENGTH_SHORT).show();
                 return;
             }
             ips.add(ip);
@@ -1440,13 +1442,245 @@ public class MainActivity extends Activity {
     private void showMenu(View anchor) {
         LinearLayout menu = menuCard("");
         final PopupWindow[] ref = new PopupWindow[1];
-        menu.addView(menuActionIcon(R.drawable.ic_menu_add, "Add", () -> showAddDialog(true)), new LinearLayout.LayoutParams(-1, -2));
-        menu.addView(menuActionIcon(R.drawable.ic_menu_devices, "Devices", () -> showBitaxeDialog()), new LinearLayout.LayoutParams(-1, -2));
+        menu.addView(menuActionIcon(R.drawable.ic_menu_devices, "Miners", () -> showBitaxeDialog()), new LinearLayout.LayoutParams(-1, -2));
+        menu.addView(menuActionIcon(R.drawable.ic_menu_power, "Power", () -> showPowerDialog()), new LinearLayout.LayoutParams(-1, -2));
         menu.addView(menuActionIcon(R.drawable.ic_menu_interval, "Interval", () -> showRefreshIntervalDialog()), new LinearLayout.LayoutParams(-1, -2));
         menu.addView(menuActionIcon(R.drawable.ic_menu_display, "Display", () -> showDisplayDialog()), new LinearLayout.LayoutParams(-1, -2));
         menu.addView(menuActionIcon(R.drawable.ic_menu_backup, "Backup", () -> showBackupDialog()), new LinearLayout.LayoutParams(-1, -2));
         menu.addView(menuActionIcon(R.drawable.ic_menu_info, "About", () -> showInfoDialog()), new LinearLayout.LayoutParams(-1, -2));
         ref[0] = showOverlayCard(menu, 280);
+    }
+
+    private void showPowerDialog() {
+        LinearLayout menu = menuCard("");
+        TextView title = text("Power", 18, TEXT, true);
+        title.setGravity(Gravity.CENTER);
+        title.setPadding(dp(10), dp(8), dp(10), dp(1));
+        menu.addView(title, new LinearLayout.LayoutParams(-1, -2));
+        TextView subtitle = text("Tasmota plugs", 13, MUTED, false);
+        subtitle.setGravity(Gravity.CENTER);
+        subtitle.setPadding(dp(14), 0, dp(14), dp(7));
+        menu.addView(subtitle, new LinearLayout.LayoutParams(-1, -2));
+        final PopupWindow[] ref = new PopupWindow[1];
+        List<PowerPlug> plugs = loadPowerPlugs();
+        if (plugs.isEmpty()) {
+            TextView empty = text("No power plugs saved", 15, MUTED, false);
+            empty.setGravity(Gravity.CENTER);
+            empty.setPadding(dp(14), dp(10), dp(14), dp(10));
+            menu.addView(empty, new LinearLayout.LayoutParams(-1, -2));
+        } else {
+            for (PowerPlug plug : plugs) addPowerPlugRow(menu, plug);
+        }
+
+        LinearLayout closeRow = dialogActionRow(menu);
+        closeRow.addView(actionButton("Add", GOOD, () -> {
+            ref[0].dismiss();
+            showAddPowerPlugDialog();
+        }), actionButtonLp(false));
+        closeRow.addView(actionButton("Close", ACTION_BLUE, () -> showMenu(null)), actionButtonLp(true));
+        ref[0] = showOverlayCard(menu, 340);
+    }
+
+    private void addPowerPlugRow(LinearLayout menu, PowerPlug plug) {
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setOnClickListener(v -> showEditPowerPlugDialog(plug.ip));
+
+        TextView left = text(plug.name, 16, TEXT, false);
+        row.addView(left, new LinearLayout.LayoutParams(0, -2, 1));
+
+        Switch sw = new Switch(this);
+        sw.setText("");
+        sw.setEnabled(false);
+        sw.setAlpha(0.62f);
+        row.addView(sw, new LinearLayout.LayoutParams(-2, -2));
+
+        final boolean[] suppress = new boolean[] { false };
+        sw.setOnCheckedChangeListener((buttonView, checked) -> {
+            if (suppress[0] || !buttonView.isPressed()) return;
+            setPowerSwitchBusy(sw, true);
+            executor.execute(() -> {
+                boolean ok = setTasmotaPower(plug.ip, checked);
+                PowerState state = fetchTasmotaPowerState(plug.ip);
+                handler.post(() -> {
+                    boolean finalOn = ok && state.online ? state.on : !checked;
+                    updatePowerSwitch(sw, suppress, ok && state.online, finalOn);
+                    Toast.makeText(this, ok ? (finalOn ? "Power on" : "Power off") : "Power failed", Toast.LENGTH_SHORT).show();
+                });
+            });
+        });
+
+        addDialogDeviceRow(menu, row);
+        refreshPowerSwitch(plug.ip, sw, suppress);
+    }
+
+    private void refreshPowerSwitch(String ip, Switch sw, boolean[] suppress) {
+        executor.execute(() -> {
+            PowerState state = fetchTasmotaPowerState(ip);
+            handler.post(() -> updatePowerSwitch(sw, suppress, state.online, state.on));
+        });
+    }
+
+    private void updatePowerSwitch(Switch sw, boolean[] suppress, boolean online, boolean on) {
+        if (sw == null) return;
+        suppress[0] = true;
+        sw.setChecked(on);
+        suppress[0] = false;
+        sw.setEnabled(online);
+        sw.setAlpha(online ? 1.0f : 0.45f);
+    }
+
+    private void setPowerSwitchBusy(Switch sw, boolean busy) {
+        if (sw == null) return;
+        sw.setEnabled(!busy);
+        sw.setAlpha(busy ? 0.62f : 1.0f);
+    }
+
+    private void showAddPowerPlugDialog() {
+        LinearLayout menu = menuCard("Add plug");
+        EditText nameInput = dialogInput("Name");
+        EditText ipInput = dialogInput("192.168.1.100");
+        addDialogInput(menu, nameInput);
+        addDialogInput(menu, ipInput);
+
+        LinearLayout row = dialogActionRow(menu);
+        final PopupWindow[] ref = new PopupWindow[1];
+        row.addView(actionButton("Cancel", Color.rgb(71, 85, 105), () -> showPowerDialog()), actionButtonLp(false));
+        row.addView(actionButton("Add", GOOD, () -> {
+            String name = nameInput.getText().toString().trim();
+            String ip = cleanIp(ipInput.getText().toString());
+            if (name.isEmpty() || ip.isEmpty()) return;
+            List<PowerPlug> plugs = loadPowerPlugs();
+            if (findPowerPlug(plugs, ip) != null) {
+                Toast.makeText(this, "Power plug already exists", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            plugs.add(new PowerPlug(name, ip));
+            savePowerPlugs(plugs);
+            showPowerDialog();
+        }), actionButtonLp(true));
+        ref[0] = showOverlayCard(menu, 300);
+    }
+
+    private void showEditPowerPlugDialog(String oldIp) {
+        List<PowerPlug> plugs = loadPowerPlugs();
+        PowerPlug plug = findPowerPlug(plugs, oldIp);
+        if (plug == null) {
+            showPowerDialog();
+            return;
+        }
+
+        LinearLayout menu = menuCard("Edit plug");
+        EditText nameInput = dialogInput("Name");
+        nameInput.setText(plug.name);
+        EditText ipInput = dialogInput("192.168.1.100");
+        ipInput.setText(plug.ip);
+        addDialogInput(menu, nameInput);
+        addDialogInput(menu, ipInput);
+
+        addDialogMenuAction(menu, menuAction("Delete", Color.rgb(248, 113, 113), () -> {
+            deletePowerPlug(oldIp);
+            showPowerDialog();
+        }));
+
+        LinearLayout row = dialogActionRow(menu);
+        final PopupWindow[] ref = new PopupWindow[1];
+        row.addView(actionButton("Cancel", Color.rgb(71, 85, 105), () -> showPowerDialog()), actionButtonLp(false));
+        row.addView(actionButton("Save", GOOD, () -> {
+            String name = nameInput.getText().toString().trim();
+            String ip = cleanIp(ipInput.getText().toString());
+            if (name.isEmpty() || ip.isEmpty()) return;
+            List<PowerPlug> updated = loadPowerPlugs();
+            PowerPlug duplicate = findPowerPlug(updated, ip);
+            if (duplicate != null && !ip.equals(oldIp)) {
+                Toast.makeText(this, "Power plug already exists", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            for (PowerPlug item : updated) {
+                if (item.ip.equals(oldIp)) {
+                    item.name = name;
+                    item.ip = ip;
+                    break;
+                }
+            }
+            savePowerPlugs(updated);
+            showPowerDialog();
+        }), actionButtonLp(true));
+        ref[0] = showOverlayCard(menu, 300);
+    }
+
+    private EditText dialogInput(String hint) {
+        EditText input = new EditText(this);
+        input.setHint(hint);
+        input.setHintTextColor(MUTED);
+        input.setTextColor(TEXT);
+        input.setSingleLine(true);
+        input.setInputType(InputType.TYPE_CLASS_TEXT);
+        int p = dp(14);
+        input.setPadding(p, dp(10), p, dp(10));
+        input.setBackground(round(CARD2, dp(12), Color.rgb(51, 82, 120)));
+        return input;
+    }
+
+    private PowerState fetchTasmotaPowerState(String ip) {
+        PowerState state = new PowerState();
+        try {
+            JSONObject j = new JSONObject(readHttpGet("http://" + cleanIp(ip) + "/cm?cmnd=Power", 2500));
+            String power = tasmotaPowerValue(j);
+            state.online = !power.isEmpty();
+            state.on = "ON".equalsIgnoreCase(power);
+        } catch (Exception ignored) {
+            state.online = false;
+        }
+        return state;
+    }
+
+    private boolean setTasmotaPower(String ip, boolean on) {
+        try {
+            readHttpGet("http://" + cleanIp(ip) + "/cm?cmnd=Power%20" + (on ? "On" : "Off"), 3000);
+            return true;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private String tasmotaPowerValue(JSONObject j) {
+        if (j == null) return "";
+        String[] keys = new String[] { "POWER", "POWER1" };
+        for (String key : keys) {
+            String value = j.optString(key, "");
+            if (!value.isEmpty()) return value;
+        }
+        JSONObject status = j.optJSONObject("StatusSTS");
+        if (status != null) {
+            for (String key : keys) {
+                String value = status.optString(key, "");
+                if (!value.isEmpty()) return value;
+            }
+        }
+        return "";
+    }
+
+    private String readHttpGet(String urlString, int timeoutMs) throws Exception {
+        HttpURLConnection c = null;
+        try {
+            URL url = new URL(urlString);
+            c = (HttpURLConnection) url.openConnection();
+            c.setUseCaches(false);
+            c.setConnectTimeout(timeoutMs);
+            c.setReadTimeout(timeoutMs);
+            c.setRequestProperty("Accept", "application/json");
+            c.setRequestProperty("Cache-Control", "no-cache");
+            c.setRequestProperty("Connection", "close");
+            int code = c.getResponseCode();
+            InputStream stream = code >= 400 ? c.getErrorStream() : c.getInputStream();
+            if (stream == null) throw new Exception("No response stream");
+            String text = readText(stream);
+            if (code < 200 || code >= 300) throw new Exception("HTTP " + code);
+            return text;
+        } finally {
+            if (c != null) c.disconnect();
+        }
     }
 
     private void showBackupDialog() {
@@ -1570,6 +1804,7 @@ public class MainActivity extends Activity {
             devices.put(item);
         }
         root.put("devices", devices);
+        root.put("powerPlugs", powerPlugsToJson(loadPowerPlugs()));
 
         JSONObject settings = new JSONObject();
         settings.put("refreshIntervalMs", getRefreshIntervalMs());
@@ -1630,6 +1865,8 @@ public class MainActivity extends Activity {
                 if (settings.has("onlineOnly")) setOnlineOnly(settings.optBoolean("onlineOnly", isOnlineOnly()));
                 if (settings.has("cardsExpanded")) prefs.edit().putBoolean(KEY_CARDS_EXPANDED, settings.optBoolean("cardsExpanded", areCardsExpandedByDefault())).apply();
             }
+            JSONArray powerPlugs = root.optJSONArray("powerPlugs");
+            if (powerPlugs != null) savePowerPlugs(powerPlugsFromJson(powerPlugs));
 
             saveIps(ips);
             refresh();
@@ -1679,7 +1916,7 @@ public class MainActivity extends Activity {
 
     private void showInfoDialog() {
         LinearLayout menu = menuCard("About BitBoard");
-        TextView msg = text("Simple Bitaxe monitoring.\n\nTrack your miners, check key stats, and manage devices in one clean view.", 15, TEXT, false);
+        TextView msg = text("Simple Bitaxe monitoring and power control.\n\nManage miners, check key stats, and control Tasmota plugs locally.", 15, TEXT, false);
         msg.setGravity(Gravity.START);
         msg.setLineSpacing(dp(2), 1.0f);
         msg.setPadding(dp(14), 0, dp(14), 0);
@@ -1782,11 +2019,11 @@ public class MainActivity extends Activity {
     }
 
     private void showBitaxeDialog() {
-        LinearLayout menu = menuCard("Manage devices");
+        LinearLayout menu = menuCard("Manage miners");
         final PopupWindow[] ref = new PopupWindow[1];
         List<String> ips = loadIps();
         if (ips.isEmpty()) {
-            TextView empty = text("No devices saved", 15, MUTED, false);
+            TextView empty = text("No miners saved", 15, MUTED, false);
             empty.setGravity(Gravity.CENTER);
             empty.setPadding(dp(14), dp(10), dp(14), dp(10));
             menu.addView(empty, new LinearLayout.LayoutParams(-1, -2));
@@ -1796,6 +2033,7 @@ public class MainActivity extends Activity {
                 LinearLayout row = new LinearLayout(this);
                 row.setGravity(Gravity.CENTER_VERTICAL);
                 TextView left = text(deviceMenuLabel(ip), 16, TEXT, false);
+                left.setOnClickListener(v -> showEditIpDialog(ip));
                 row.addView(left, new LinearLayout.LayoutParams(0, -2, 1));
 
                 ImageButton up = iconButton(R.drawable.ic_device_arrow_up, Color.rgb(71, 85, 105), "Move up");
@@ -1809,10 +2047,6 @@ public class MainActivity extends Activity {
                 down.setAlpha(i < ips.size() - 1 ? 1.0f : 0.35f);
                 down.setOnClickListener(v -> moveDevice(ip, 1));
                 row.addView(down, deviceIconButtonLp(false));
-
-                ImageButton edit = iconButton(R.drawable.ic_device_edit, ACTION_BLUE, "Edit IP");
-                edit.setOnClickListener(v -> showEditIpDialog(ip));
-                row.addView(edit, deviceIconButtonLp(false));
 
                 ImageButton delete = iconButton(R.drawable.ic_device_trash, Color.rgb(220, 38, 38), "Delete");
                 delete.setOnClickListener(v -> confirmDeleteIp(ip));
@@ -1882,7 +2116,7 @@ public class MainActivity extends Activity {
             if (newIp.isEmpty()) return;
             List<String> ips = loadIps();
             if (!newIp.equals(oldIp) && ips.contains(newIp)) {
-                Toast.makeText(this, "Device already exists", Toast.LENGTH_SHORT).show();
+                Toast.makeText(this, "Miner already exists", Toast.LENGTH_SHORT).show();
                 return;
             }
             int idx = ips.indexOf(oldIp);
@@ -1898,7 +2132,7 @@ public class MainActivity extends Activity {
     }
 
     private void confirmDeleteIp(String ip) {
-        LinearLayout menu = menuCard("Delete device?");
+        LinearLayout menu = menuCard("Delete miner?");
         TextView msg = text(ip, 15, MUTED, false);
         msg.setGravity(Gravity.CENTER);
         msg.setPadding(dp(14), 0, dp(14), dp(2));
@@ -1925,6 +2159,67 @@ public class MainActivity extends Activity {
         return out;
     }
     private void saveIps(List<String> ips) { JSONArray a = new JSONArray(); for(String ip:ips) a.put(ip); prefs.edit().putString(KEY_IPS, a.toString()).apply(); }
+
+    private List<PowerPlug> loadPowerPlugs() {
+        try {
+            return powerPlugsFromJson(new JSONArray(prefs.getString(KEY_POWER_PLUGS, "[]")));
+        } catch (Exception ignored) {
+            return new ArrayList<>();
+        }
+    }
+
+    private void savePowerPlugs(List<PowerPlug> plugs) {
+        prefs.edit().putString(KEY_POWER_PLUGS, powerPlugsToJson(plugs).toString()).apply();
+    }
+
+    private JSONArray powerPlugsToJson(List<PowerPlug> plugs) {
+        JSONArray a = new JSONArray();
+        if (plugs == null) return a;
+        for (PowerPlug plug : plugs) {
+            if (plug == null || plug.ip == null || plug.ip.isEmpty()) continue;
+            String name = plug.name == null ? "" : plug.name.trim();
+            if (name.isEmpty()) continue;
+            JSONObject item = new JSONObject();
+            try {
+                item.put("name", name);
+                item.put("ip", cleanIp(plug.ip));
+                a.put(item);
+            } catch (Exception ignored) {}
+        }
+        return a;
+    }
+
+    private List<PowerPlug> powerPlugsFromJson(JSONArray a) {
+        List<PowerPlug> plugs = new ArrayList<>();
+        if (a == null) return plugs;
+        for (int i = 0; i < a.length(); i++) {
+            JSONObject item = a.optJSONObject(i);
+            if (item == null) continue;
+            String ip = cleanIp(item.optString("ip", ""));
+            String name = item.optString("name", "").trim();
+            if (name.isEmpty() || ip.isEmpty() || findPowerPlug(plugs, ip) != null) continue;
+            plugs.add(new PowerPlug(name, ip));
+        }
+        return plugs;
+    }
+
+    private PowerPlug findPowerPlug(List<PowerPlug> plugs, String ip) {
+        String clean = cleanIp(ip);
+        if (plugs == null || clean.isEmpty()) return null;
+        for (PowerPlug plug : plugs) {
+            if (plug != null && clean.equals(plug.ip)) return plug;
+        }
+        return null;
+    }
+
+    private void deletePowerPlug(String ip) {
+        List<PowerPlug> plugs = loadPowerPlugs();
+        String clean = cleanIp(ip);
+        for (int i = plugs.size() - 1; i >= 0; i--) {
+            if (clean.equals(plugs.get(i).ip)) plugs.remove(i);
+        }
+        savePowerPlugs(plugs);
+    }
 
     private String readText(InputStream stream) throws Exception {
         BufferedReader br = new BufferedReader(new InputStreamReader(stream, "UTF-8"));
@@ -2047,6 +2342,14 @@ public class MainActivity extends Activity {
 
     private static class CardHolder { LinearLayout card, body; LinearLayout[] rows; TextView name, sub, footer; TextView[] labels, values; ImageButton pauseResume; String ip = "", deviceName = ""; long lastSharesAccepted = -1; String sharesMetricLabel = "Shares"; boolean expanded = false, pauseResumeBusy = false; Device currentDevice = null; }
     private static class MetricBox { LinearLayout box; TextView label, value; }
+    private static class PowerState { boolean online, on; }
+    private static class PowerPlug {
+        String name, ip;
+        PowerPlug(String name, String ip) {
+            this.name = name;
+            this.ip = ip;
+        }
+    }
 
     private static class Device {
         String ip, name="", model="", firmware="", axeOSVersion="", chip="", block="–", bestDiff="–", sessionDiff="–", poolDiff="–", wifi="–", uptime="–";

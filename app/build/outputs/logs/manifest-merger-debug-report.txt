@@ -1,0 +1,86 @@
+-- Merging decision tree log ---
+manifest
+ADDED from /home/zwegen/BitBoard/github-source/app/src/main/AndroidManifest.xml:1:1-19:12
+INJECTED from /home/zwegen/BitBoard/github-source/app/src/main/AndroidManifest.xml:1:1-19:12
+INJECTED from /home/zwegen/BitBoard/github-source/app/src/main/AndroidManifest.xml:1:1-19:12
+INJECTED from /home/zwegen/BitBoard/github-source/app/src/main/AndroidManifest.xml:1:1-19:12
+MERGED from [androidx.swiperefreshlayout:swiperefreshlayout:1.1.0] /home/zwegen/.gradle/caches/transforms-3/a27474fd499bb3dd9b2ee28c5b36786d/transformed/swiperefreshlayout-1.1.0/AndroidManifest.xml:17:1-24:12
+MERGED from [androidx.core:core:1.1.0] /home/zwegen/.gradle/caches/transforms-3/fe5c0d66bf6a7e83477779eb69918888/transformed/core-1.1.0/AndroidManifest.xml:17:1-26:12
+MERGED from [androidx.interpolator:interpolator:1.0.0] /home/zwegen/.gradle/caches/transforms-3/6b9bb6a8c71662ca631e197a9e065197/transformed/interpolator-1.0.0/AndroidManifest.xml:17:1-22:12
+MERGED from [androidx.versionedparcelable:versionedparcelable:1.1.0] /home/zwegen/.gradle/caches/transforms-3/83d4bfcc0533960f2405d864b430ed40/transformed/versionedparcelable-1.1.0/AndroidManifest.xml:17:1-27:12
+MERGED from [androidx.lifecycle:lifecycle-runtime:2.0.0] /home/zwegen/.gradle/caches/transforms-3/4bd284e9fd0c7125cff77acb3a3e93d8/transformed/lifecycle-runtime-2.0.0/AndroidManifest.xml:17:1-22:12
+	package
+		INJECTED from /home/zwegen/BitBoard/github-source/app/src/main/AndroidManifest.xml
+	android:versionName
+		INJECTED from /home/zwegen/BitBoard/github-source/app/src/main/AndroidManifest.xml
+	android:versionCode
+		INJECTED from /home/zwegen/BitBoard/github-source/app/src/main/AndroidManifest.xml
+	xmlns:android
+		ADDED from /home/zwegen/BitBoard/github-source/app/src/main/AndroidManifest.xml:1:11-69
+uses-permission#android.permission.INTERNET
+ADDED from /home/zwegen/BitBoard/github-source/app/src/main/AndroidManifest.xml:2:5-67
+	android:name
+		ADDED from /home/zwegen/BitBoard/github-source/app/src/main/AndroidManifest.xml:2:22-64
+uses-permission#android.permission.ACCESS_NETWORK_STATE
+ADDED from /home/zwegen/BitBoard/github-source/app/src/main/AndroidManifest.xml:3:5-79
+	android:name
+		ADDED from /home/zwegen/BitBoard/github-source/app/src/main/AndroidManifest.xml:3:22-76
+application
+ADDED from /home/zwegen/BitBoard/github-source/app/src/main/AndroidManifest.xml:4:5-18:19
+INJECTED from /home/zwegen/BitBoard/github-source/app/src/main/AndroidManifest.xml:4:5-18:19
+MERGED from [androidx.core:core:1.1.0] /home/zwegen/.gradle/caches/transforms-3/fe5c0d66bf6a7e83477779eb69918888/transformed/core-1.1.0/AndroidManifest.xml:24:5-89
+MERGED from [androidx.core:core:1.1.0] /home/zwegen/.gradle/caches/transforms-3/fe5c0d66bf6a7e83477779eb69918888/transformed/core-1.1.0/AndroidManifest.xml:24:5-89
+MERGED from [androidx.versionedparcelable:versionedparcelable:1.1.0] /home/zwegen/.gradle/caches/transforms-3/83d4bfcc0533960f2405d864b430ed40/transformed/versionedparcelable-1.1.0/AndroidManifest.xml:24:5-25:19
+MERGED from [androidx.versionedparcelable:versionedparcelable:1.1.0] /home/zwegen/.gradle/caches/transforms-3/83d4bfcc0533960f2405d864b430ed40/transformed/versionedparcelable-1.1.0/AndroidManifest.xml:24:5-25:19
+	android:extractNativeLibs
+		INJECTED from /home/zwegen/BitBoard/github-source/app/src/main/AndroidManifest.xml
+	android:appComponentFactory
+		ADDED from [androidx.core:core:1.1.0] /home/zwegen/.gradle/caches/transforms-3/fe5c0d66bf6a7e83477779eb69918888/transformed/core-1.1.0/AndroidManifest.xml:24:18-86
+	android:supportsRtl
+		ADDED from /home/zwegen/BitBoard/github-source/app/src/main/AndroidManifest.xml:11:9-35
+	android:label
+		ADDED from /home/zwegen/BitBoard/github-source/app/src/main/AndroidManifest.xml:6:9-33
+	android:icon
+		ADDED from /home/zwegen/BitBoard/github-source/app/src/main/AndroidManifest.xml:7:9-43
+	android:allowBackup
+		ADDED from /home/zwegen/BitBoard/github-source/app/src/main/AndroidManifest.xml:5:9-35
+	android:theme
+		ADDED from /home/zwegen/BitBoard/github-source/app/src/main/AndroidManifest.xml:8:9-46
+	android:networkSecurityConfig
+		ADDED from /home/zwegen/BitBoard/github-source/app/src/main/AndroidManifest.xml:10:9-69
+	android:usesCleartextTraffic
+		ADDED from /home/zwegen/BitBoard/github-source/app/src/main/AndroidManifest.xml:9:9-44
+activity#com.zwegen.bitboard.MainActivity
+ADDED from /home/zwegen/BitBoard/github-source/app/src/main/AndroidManifest.xml:12:9-17:20
+	android:exported
+		ADDED from /home/zwegen/BitBoard/github-source/app/src/main/AndroidManifest.xml:12:48-71
+	android:name
+		ADDED from /home/zwegen/BitBoard/github-source/app/src/main/AndroidManifest.xml:12:19-47
+intent-filter#action:name:android.intent.action.MAIN+category:name:android.intent.category.LAUNCHER
+ADDED from /home/zwegen/BitBoard/github-source/app/src/main/AndroidManifest.xml:13:13-16:29
+action#android.intent.action.MAIN
+ADDED from /home/zwegen/BitBoard/github-source/app/src/main/AndroidManifest.xml:14:17-69
+	android:name
+		ADDED from /home/zwegen/BitBoard/github-source/app/src/main/AndroidManifest.xml:14:25-66
+category#android.intent.category.LAUNCHER
+ADDED from /home/zwegen/BitBoard/github-source/app/src/main/AndroidManifest.xml:15:17-77
+	android:name
+		ADDED from /home/zwegen/BitBoard/github-source/app/src/main/AndroidManifest.xml:15:27-74
+uses-sdk
+INJECTED from /home/zwegen/BitBoard/github-source/app/src/main/AndroidManifest.xml reason: use-sdk injection requested
+INJECTED from /home/zwegen/BitBoard/github-source/app/src/main/AndroidManifest.xml
+INJECTED from /home/zwegen/BitBoard/github-source/app/src/main/AndroidManifest.xml
+MERGED from [androidx.swiperefreshlayout:swiperefreshlayout:1.1.0] /home/zwegen/.gradle/caches/transforms-3/a27474fd499bb3dd9b2ee28c5b36786d/transformed/swiperefreshlayout-1.1.0/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.swiperefreshlayout:swiperefreshlayout:1.1.0] /home/zwegen/.gradle/caches/transforms-3/a27474fd499bb3dd9b2ee28c5b36786d/transformed/swiperefreshlayout-1.1.0/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.core:core:1.1.0] /home/zwegen/.gradle/caches/transforms-3/fe5c0d66bf6a7e83477779eb69918888/transformed/core-1.1.0/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.core:core:1.1.0] /home/zwegen/.gradle/caches/transforms-3/fe5c0d66bf6a7e83477779eb69918888/transformed/core-1.1.0/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.interpolator:interpolator:1.0.0] /home/zwegen/.gradle/caches/transforms-3/6b9bb6a8c71662ca631e197a9e065197/transformed/interpolator-1.0.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.interpolator:interpolator:1.0.0] /home/zwegen/.gradle/caches/transforms-3/6b9bb6a8c71662ca631e197a9e065197/transformed/interpolator-1.0.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.versionedparcelable:versionedparcelable:1.1.0] /home/zwegen/.gradle/caches/transforms-3/83d4bfcc0533960f2405d864b430ed40/transformed/versionedparcelable-1.1.0/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.versionedparcelable:versionedparcelable:1.1.0] /home/zwegen/.gradle/caches/transforms-3/83d4bfcc0533960f2405d864b430ed40/transformed/versionedparcelable-1.1.0/AndroidManifest.xml:20:5-22:41
+MERGED from [androidx.lifecycle:lifecycle-runtime:2.0.0] /home/zwegen/.gradle/caches/transforms-3/4bd284e9fd0c7125cff77acb3a3e93d8/transformed/lifecycle-runtime-2.0.0/AndroidManifest.xml:20:5-44
+MERGED from [androidx.lifecycle:lifecycle-runtime:2.0.0] /home/zwegen/.gradle/caches/transforms-3/4bd284e9fd0c7125cff77acb3a3e93d8/transformed/lifecycle-runtime-2.0.0/AndroidManifest.xml:20:5-44
+	android:targetSdkVersion
+		INJECTED from /home/zwegen/BitBoard/github-source/app/src/main/AndroidManifest.xml
+	android:minSdkVersion
+		INJECTED from /home/zwegen/BitBoard/github-source/app/src/main/AndroidManifest.xml
