@@ -72,6 +72,9 @@ public class MainActivity extends Activity {
     private static final String KEY_CARDS_EXPANDED = "cards_expanded";
     private static final String KEY_ONLINE_ONLY = "online_only";
     private static final String KEY_POWER_PLUGS = "power_plugs";
+    private static final String POWER_TYPE_TASMOTA = "tasmota";
+    private static final String POWER_TYPE_SHELLY1 = "shelly1";
+    private static final String POWER_TYPE_SHELLY2_PLUS = "shelly2plus";
     private static final String KEY_BACKUP_TREE_URI = "backup_tree_uri";
     private static final String KEY_LAST_DEVICE_PREFIX = "last_device_";
     private static final long RESUME_STALE_MS = 60_000L;
@@ -1457,7 +1460,7 @@ public class MainActivity extends Activity {
         title.setGravity(Gravity.CENTER);
         title.setPadding(dp(10), dp(8), dp(10), dp(1));
         menu.addView(title, new LinearLayout.LayoutParams(-1, -2));
-        TextView subtitle = text("Tasmota plugs", 13, MUTED, false);
+        TextView subtitle = text("Tasmota / Shelly plugs", 13, MUTED, false);
         subtitle.setGravity(Gravity.CENTER);
         subtitle.setPadding(dp(14), 0, dp(14), dp(7));
         menu.addView(subtitle, new LinearLayout.LayoutParams(-1, -2));
@@ -1486,8 +1489,15 @@ public class MainActivity extends Activity {
         row.setGravity(Gravity.CENTER_VERTICAL);
         row.setOnClickListener(v -> showEditPowerPlugDialog(plug.ip));
 
-        TextView left = text(plug.name, 16, TEXT, false);
-        row.addView(left, new LinearLayout.LayoutParams(0, -2, 1));
+        LinearLayout labels = new LinearLayout(this);
+        labels.setOrientation(LinearLayout.VERTICAL);
+        labels.setGravity(Gravity.CENTER_VERTICAL);
+        TextView name = text(plug.name, 16, TEXT, false);
+        TextView type = text(powerTypeLabel(plug.type), 12, MUTED, false);
+        type.setPadding(0, dp(1), 0, 0);
+        labels.addView(name, new LinearLayout.LayoutParams(-1, -2));
+        labels.addView(type, new LinearLayout.LayoutParams(-1, -2));
+        row.addView(labels, new LinearLayout.LayoutParams(0, -2, 1));
 
         Switch sw = new Switch(this);
         sw.setText("");
@@ -1500,8 +1510,8 @@ public class MainActivity extends Activity {
             if (suppress[0] || !buttonView.isPressed()) return;
             setPowerSwitchBusy(sw, true);
             executor.execute(() -> {
-                boolean ok = setTasmotaPower(plug.ip, checked);
-                PowerState state = fetchTasmotaPowerState(plug.ip);
+                boolean ok = setPower(plug, checked);
+                PowerState state = fetchPowerState(plug);
                 handler.post(() -> {
                     boolean finalOn = ok && state.online ? state.on : !checked;
                     updatePowerSwitch(sw, suppress, ok && state.online, finalOn);
@@ -1511,12 +1521,12 @@ public class MainActivity extends Activity {
         });
 
         addDialogDeviceRow(menu, row);
-        refreshPowerSwitch(plug.ip, sw, suppress);
+        refreshPowerSwitch(plug, sw, suppress);
     }
 
-    private void refreshPowerSwitch(String ip, Switch sw, boolean[] suppress) {
+    private void refreshPowerSwitch(PowerPlug plug, Switch sw, boolean[] suppress) {
         executor.execute(() -> {
-            PowerState state = fetchTasmotaPowerState(ip);
+            PowerState state = fetchPowerState(plug);
             handler.post(() -> updatePowerSwitch(sw, suppress, state.online, state.on));
         });
     }
@@ -1540,8 +1550,11 @@ public class MainActivity extends Activity {
         LinearLayout menu = menuCard("Add plug");
         EditText nameInput = dialogInput("Name");
         EditText ipInput = dialogInput("192.168.1.100");
+        final String[] type = new String[] { POWER_TYPE_TASMOTA };
+        Button typeButton = powerTypeButton(type);
         addDialogInput(menu, nameInput);
         addDialogInput(menu, ipInput);
+        menu.addView(typeButton);
 
         LinearLayout row = dialogActionRow(menu);
         final PopupWindow[] ref = new PopupWindow[1];
@@ -1555,7 +1568,7 @@ public class MainActivity extends Activity {
                 Toast.makeText(this, "Power plug already exists", Toast.LENGTH_SHORT).show();
                 return;
             }
-            plugs.add(new PowerPlug(name, ip));
+            plugs.add(new PowerPlug(name, ip, type[0]));
             savePowerPlugs(plugs);
             showPowerDialog();
         }), actionButtonLp(true));
@@ -1575,8 +1588,11 @@ public class MainActivity extends Activity {
         nameInput.setText(plug.name);
         EditText ipInput = dialogInput("192.168.1.100");
         ipInput.setText(plug.ip);
+        final String[] type = new String[] { normalizePowerType(plug.type) };
+        Button typeButton = powerTypeButton(type);
         addDialogInput(menu, nameInput);
         addDialogInput(menu, ipInput);
+        menu.addView(typeButton);
 
         addDialogMenuAction(menu, menuAction("Delete", Color.rgb(248, 113, 113), () -> {
             deletePowerPlug(oldIp);
@@ -1600,6 +1616,7 @@ public class MainActivity extends Activity {
                 if (item.ip.equals(oldIp)) {
                     item.name = name;
                     item.ip = ip;
+                    item.type = type[0];
                     break;
                 }
             }
@@ -1622,6 +1639,34 @@ public class MainActivity extends Activity {
         return input;
     }
 
+    private Button powerTypeButton(String[] typeRef) {
+        Button b = dialogButton("Type: " + powerTypeLabel(typeRef[0]), Color.rgb(71, 85, 105));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+        lp.setMargins(dp(14), dp(8), dp(14), 0);
+        b.setLayoutParams(lp);
+        b.setOnClickListener(v -> {
+            typeRef[0] = nextPowerType(typeRef[0]);
+            b.setText("Type: " + powerTypeLabel(typeRef[0]));
+        });
+        return b;
+    }
+
+    private PowerState fetchPowerState(PowerPlug plug) {
+        if (plug == null) return new PowerState();
+        String type = normalizePowerType(plug.type);
+        if (POWER_TYPE_SHELLY1.equals(type)) return fetchShellyGen1PowerState(plug.ip);
+        if (POWER_TYPE_SHELLY2_PLUS.equals(type)) return fetchShellyGen2PlusPowerState(plug.ip);
+        return fetchTasmotaPowerState(plug.ip);
+    }
+
+    private boolean setPower(PowerPlug plug, boolean on) {
+        if (plug == null) return false;
+        String type = normalizePowerType(plug.type);
+        if (POWER_TYPE_SHELLY1.equals(type)) return setShellyGen1Power(plug.ip, on);
+        if (POWER_TYPE_SHELLY2_PLUS.equals(type)) return setShellyGen2PlusPower(plug.ip, on);
+        return setTasmotaPower(plug.ip, on);
+    }
+
     private PowerState fetchTasmotaPowerState(String ip) {
         PowerState state = new PowerState();
         try {
@@ -1638,6 +1683,48 @@ public class MainActivity extends Activity {
     private boolean setTasmotaPower(String ip, boolean on) {
         try {
             readHttpGet("http://" + cleanIp(ip) + "/cm?cmnd=Power%20" + (on ? "On" : "Off"), 3000);
+            return true;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private PowerState fetchShellyGen1PowerState(String ip) {
+        PowerState state = new PowerState();
+        try {
+            JSONObject j = new JSONObject(readHttpGet("http://" + cleanIp(ip) + "/relay/0", 2500));
+            state.online = j.has("ison");
+            state.on = j.optBoolean("ison", false);
+        } catch (Exception ignored) {
+            state.online = false;
+        }
+        return state;
+    }
+
+    private boolean setShellyGen1Power(String ip, boolean on) {
+        try {
+            readHttpGet("http://" + cleanIp(ip) + "/relay/0?turn=" + (on ? "on" : "off"), 3000);
+            return true;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private PowerState fetchShellyGen2PlusPowerState(String ip) {
+        PowerState state = new PowerState();
+        try {
+            JSONObject j = new JSONObject(readHttpGet("http://" + cleanIp(ip) + "/rpc/Switch.GetStatus?id=0", 2500));
+            state.online = j.has("output");
+            state.on = j.optBoolean("output", false);
+        } catch (Exception ignored) {
+            state.online = false;
+        }
+        return state;
+    }
+
+    private boolean setShellyGen2PlusPower(String ip, boolean on) {
+        try {
+            readHttpGet("http://" + cleanIp(ip) + "/rpc/Switch.Set?id=0&on=" + (on ? "true" : "false"), 3000);
             return true;
         } catch (Exception ignored) {
             return false;
@@ -1916,7 +2003,7 @@ public class MainActivity extends Activity {
 
     private void showInfoDialog() {
         LinearLayout menu = menuCard("About BitBoard");
-        TextView msg = text("Simple Bitaxe monitoring and power control.\n\nManage miners, check key stats, and control Tasmota plugs locally.", 15, TEXT, false);
+        TextView msg = text("Simple Bitaxe monitoring and power control.\n\nManage miners, check key stats, and control Tasmota and Shelly plugs locally.", 15, TEXT, false);
         msg.setGravity(Gravity.START);
         msg.setLineSpacing(dp(2), 1.0f);
         msg.setPadding(dp(14), 0, dp(14), 0);
@@ -2183,6 +2270,7 @@ public class MainActivity extends Activity {
             try {
                 item.put("name", name);
                 item.put("ip", cleanIp(plug.ip));
+                item.put("type", normalizePowerType(plug.type));
                 a.put(item);
             } catch (Exception ignored) {}
         }
@@ -2197,10 +2285,31 @@ public class MainActivity extends Activity {
             if (item == null) continue;
             String ip = cleanIp(item.optString("ip", ""));
             String name = item.optString("name", "").trim();
+            String type = normalizePowerType(item.optString("type", POWER_TYPE_TASMOTA));
             if (name.isEmpty() || ip.isEmpty() || findPowerPlug(plugs, ip) != null) continue;
-            plugs.add(new PowerPlug(name, ip));
+            plugs.add(new PowerPlug(name, ip, type));
         }
         return plugs;
+    }
+
+    private static String normalizePowerType(String type) {
+        if (POWER_TYPE_SHELLY1.equals(type)) return POWER_TYPE_SHELLY1;
+        if (POWER_TYPE_SHELLY2_PLUS.equals(type) || "shelly2".equals(type) || "shelly3".equals(type)) return POWER_TYPE_SHELLY2_PLUS;
+        return POWER_TYPE_TASMOTA;
+    }
+
+    private static String nextPowerType(String type) {
+        type = normalizePowerType(type);
+        if (POWER_TYPE_TASMOTA.equals(type)) return POWER_TYPE_SHELLY1;
+        if (POWER_TYPE_SHELLY1.equals(type)) return POWER_TYPE_SHELLY2_PLUS;
+        return POWER_TYPE_TASMOTA;
+    }
+
+    private static String powerTypeLabel(String type) {
+        type = normalizePowerType(type);
+        if (POWER_TYPE_SHELLY1.equals(type)) return "Shelly Gen1";
+        if (POWER_TYPE_SHELLY2_PLUS.equals(type)) return "Shelly Gen2/3";
+        return "Tasmota";
     }
 
     private PowerPlug findPowerPlug(List<PowerPlug> plugs, String ip) {
@@ -2344,10 +2453,16 @@ public class MainActivity extends Activity {
     private static class MetricBox { LinearLayout box; TextView label, value; }
     private static class PowerState { boolean online, on; }
     private static class PowerPlug {
-        String name, ip;
+        String name, ip, type;
         PowerPlug(String name, String ip) {
             this.name = name;
             this.ip = ip;
+            this.type = POWER_TYPE_TASMOTA;
+        }
+        PowerPlug(String name, String ip, String type) {
+            this.name = name;
+            this.ip = ip;
+            this.type = normalizePowerType(type);
         }
     }
 

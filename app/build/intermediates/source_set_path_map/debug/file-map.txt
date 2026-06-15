@@ -1,9 +1,0 @@
-com.zwegen.bitboard.app-swiperefreshlayout-1.1.0-0 /home/zwegen/.gradle/caches/transforms-3/a27474fd499bb3dd9b2ee28c5b36786d/transformed/swiperefreshlayout-1.1.0/res
-com.zwegen.bitboard.app-core-1.1.0-1 /home/zwegen/.gradle/caches/transforms-3/fe5c0d66bf6a7e83477779eb69918888/transformed/core-1.1.0/res
-com.zwegen.bitboard.app-pngs-2 /home/zwegen/BitBoard/github-source/app/build/generated/res/pngs/debug
-com.zwegen.bitboard.app-resValues-3 /home/zwegen/BitBoard/github-source/app/build/generated/res/resValues/debug
-com.zwegen.bitboard.app-packageDebugResources-4 /home/zwegen/BitBoard/github-source/app/build/intermediates/incremental/debug/packageDebugResources/merged.dir
-com.zwegen.bitboard.app-packageDebugResources-5 /home/zwegen/BitBoard/github-source/app/build/intermediates/incremental/debug/packageDebugResources/stripped.dir
-com.zwegen.bitboard.app-merged_res-6 /home/zwegen/BitBoard/github-source/app/build/intermediates/merged_res/debug
-com.zwegen.bitboard.app-debug-7 /home/zwegen/BitBoard/github-source/app/src/debug/res
-com.zwegen.bitboard.app-main-8 /home/zwegen/BitBoard/github-source/app/src/main/res
