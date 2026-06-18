@@ -1,18 +1,22 @@
 # BitBoard
 
-Simple Bitaxe monitoring for Android.
+BitBoard is a simple Android monitor and control app for Bitaxe miners.
 
-BitBoard keeps your Bitaxe miners in one clean view: status, hashrate, temperature, power, shares, uptime, Wi-Fi, pool data, and solo chance information.
+It keeps local miners in one clean view and focuses on the details that matter during day-to-day use: hashrate, temperature, power, shares, uptime, Wi-Fi, pool data, and solo mining chance.
 
-## Features
+## What It Can Do
 
-- Add and manage multiple Bitaxe devices by IP address
-- Compact and expanded card views
-- Online-only display mode
-- Manual pull-to-refresh or timed refresh intervals
-- Per-device refresh, restart, and browser shortcuts
-- Offline devices keep their last known values dimmed
-- Donation and app info screens
+- Add and manage multiple Bitaxe miners by IP address
+- Show live status, hashrate, power, temperature, shares, uptime, Wi-Fi, pool difficulty, and found blocks
+- Calculate a weekly solo mining chance from the combined miner hashrate
+- Keep offline miners visible with their last known values dimmed
+- Switch between compact and expanded miner cards
+- Show only online miners when needed
+- Refresh manually with pull-to-refresh or use timed refresh intervals
+- Refresh, restart, pause, or resume individual miners when supported
+- Open a miner directly in the browser
+- Control local Tasmota and Shelly power plugs
+- Export and import miner and power plug settings as a JSON backup
 
 ## Screenshots
 
@@ -30,11 +34,3 @@ The app icon is stored in [`metadata/icon/bitboard.png`](metadata/icon/bitboard.
 - Package: `com.zwegen.bitboard`
 - Minimum SDK: 24
 - Target SDK: 34
-
-## Release notes
-
-Release APKs are signed with the BitBoard release key. The signing key and passwords are not part of this repository.
-
-Latest release: `v0.643`
-
-See [`CHANGELOG.md`](CHANGELOG.md) for release details.

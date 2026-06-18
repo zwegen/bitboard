@@ -77,6 +77,12 @@ public class MainActivity extends Activity {
     private static final String POWER_TYPE_SHELLY2_PLUS = "shelly2plus";
     private static final String KEY_BACKUP_TREE_URI = "backup_tree_uri";
     private static final String KEY_LAST_DEVICE_PREFIX = "last_device_";
+    private static final String STATE_DEVICES = "state_devices";
+    private static final String STATE_CARDS_EXPANDED = "state_cards_expanded";
+    private static final String STATE_LAST_REFRESH_AT = "state_last_refresh_at";
+    private static final String STATE_NEXT_REFRESH_INDEX = "state_next_refresh_index";
+    private static final String STATE_NETWORK_HASHRATE_EH = "state_network_hashrate_eh";
+    private static final String STATE_NETWORK_HASHRATE_FETCHED_AT = "state_network_hashrate_fetched_at";
     private static final long RESUME_STALE_MS = 60_000L;
     private static final long DEFAULT_REFRESH_INTERVAL_MS = 120000L;
     private static final long REFRESH_MANUAL = 0L;
@@ -146,6 +152,7 @@ public class MainActivity extends Activity {
         super.onCreate(b);
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         buildUi();
+        restoreUiState(b);
     }
 
     @Override protected void onResume() {
@@ -185,6 +192,81 @@ public class MainActivity extends Activity {
             }
             pendingBackupAction = BACKUP_ACTION_NONE;
         }
+    }
+
+    @Override protected void onSaveInstanceState(Bundle outState) {
+        saveUiState(outState);
+        super.onSaveInstanceState(outState);
+    }
+
+    private void saveUiState(Bundle outState) {
+        if (outState == null) return;
+        outState.putLong(STATE_LAST_REFRESH_AT, lastDeviceRefreshAt);
+        outState.putInt(STATE_NEXT_REFRESH_INDEX, nextRefreshIndex);
+        outState.putDouble(STATE_NETWORK_HASHRATE_EH, networkHashrateEh);
+        outState.putLong(STATE_NETWORK_HASHRATE_FETCHED_AT, networkHashrateFetchedAt);
+
+        JSONArray devices = new JSONArray();
+        for (String ip : loadIps()) {
+            Device d = currentDevices.get(ip);
+            if (d == null) continue;
+            try {
+                devices.put(deviceToJson(d));
+            } catch (Exception ignored) {}
+        }
+        outState.putString(STATE_DEVICES, devices.toString());
+
+        JSONArray expanded = new JSONArray();
+        for (String ip : loadIps()) {
+            CardHolder h = cards.get(ip);
+            if (h == null) continue;
+            try {
+                JSONObject item = new JSONObject();
+                item.put("ip", ip);
+                item.put("expanded", h.expanded);
+                expanded.put(item);
+            } catch (Exception ignored) {}
+        }
+        outState.putString(STATE_CARDS_EXPANDED, expanded.toString());
+    }
+
+    private void restoreUiState(Bundle state) {
+        if (state == null) return;
+        lastDeviceRefreshAt = state.getLong(STATE_LAST_REFRESH_AT, 0L);
+        nextRefreshIndex = state.getInt(STATE_NEXT_REFRESH_INDEX, 0);
+        networkHashrateEh = state.getDouble(STATE_NETWORK_HASHRATE_EH, 0);
+        networkHashrateFetchedAt = state.getLong(STATE_NETWORK_HASHRATE_FETCHED_AT, 0);
+
+        List<Device> devices = new ArrayList<>();
+        try {
+            JSONArray a = new JSONArray(state.getString(STATE_DEVICES, "[]"));
+            for (int i = 0; i < a.length(); i++) {
+                JSONObject item = a.optJSONObject(i);
+                if (item == null) continue;
+                Device d = deviceFromJson(item);
+                if (d.ip != null && !d.ip.isEmpty()) devices.add(d);
+            }
+        } catch (Exception ignored) {}
+        if (!devices.isEmpty()) {
+            renderDevices(devices, loadIps(), true);
+            restoreCardExpandedState(state.getString(STATE_CARDS_EXPANDED, "[]"));
+        }
+    }
+
+    private void restoreCardExpandedState(String raw) {
+        try {
+            JSONArray a = new JSONArray(raw == null ? "[]" : raw);
+            for (int i = 0; i < a.length(); i++) {
+                JSONObject item = a.optJSONObject(i);
+                if (item == null) continue;
+                String ip = cleanIp(item.optString("ip", ""));
+                CardHolder h = cards.get(ip);
+                if (h == null) continue;
+                h.expanded = item.optBoolean("expanded", h.expanded);
+                applyCompactMode(h, false);
+                if (h.currentDevice != null) updateCard(h, h.currentDevice, true);
+            }
+        } catch (Exception ignored) {}
     }
 
     @Override protected void onDestroy() {
@@ -685,7 +767,7 @@ public class MainActivity extends Activity {
         double chance = (totalHashGh / networkGh) * 1008.0;
         if (chance <= 0) return "No solo chance data";
         long weeks = (long)(1.0 / chance);
-        return "1:" + formatLong(weeks) + " / Week";
+        return "1 : " + formatLong(weeks) + " / Week";
     }
 
     private Device fetchDevice(String ip) {
@@ -773,7 +855,7 @@ public class MainActivity extends Activity {
         LinearLayout body = new LinearLayout(this);
         h.body = body;
         body.setOrientation(LinearLayout.VERTICAL);
-        body.setPadding(dp(12), dp(12), dp(14), dp(8));
+        body.setPadding(dp(12), dp(6), dp(14), dp(7));
         body.setBackground(round(CARD, dp(20), 0));
         LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(0, -2, 1);
         blp.setMargins(dp(1), dp(1), dp(1), dp(1));
@@ -785,13 +867,15 @@ public class MainActivity extends Activity {
         LinearLayout titleBox = new LinearLayout(this); titleBox.setOrientation(LinearLayout.VERTICAL);
         head.addView(titleBox, new LinearLayout.LayoutParams(0, -2, 1));
         h.name = text("", 20, TEXT, true);
+        h.name.setIncludeFontPadding(false);
         h.name.setGravity(Gravity.START);
         h.sub = text("", 12, MUTED, false);
+        h.sub.setIncludeFontPadding(false);
         h.sub.setGravity(Gravity.START);
         titleBox.addView(h.name);
         titleBox.addView(h.sub);
         h.pauseResume = iconButton(R.drawable.ic_card_pause, ACTION_AMBER, "Pause mining");
-        h.pauseResume.setOnClickListener(v -> togglePauseResume(h));
+        h.pauseResume.setOnClickListener(v -> confirmPauseResume(h));
         head.addView(h.pauseResume, deviceIconButtonLp());
 
         ImageButton open = iconButton(R.drawable.ic_open_browser, Color.rgb(100, 116, 139), "Open");
@@ -808,7 +892,7 @@ public class MainActivity extends Activity {
 
         LinearLayout grid = new LinearLayout(this);
         grid.setOrientation(LinearLayout.VERTICAL);
-        grid.setPadding(0, dp(12), 0, 0);
+        grid.setPadding(0, dp(6), 0, 0);
         body.addView(grid);
         h.values = new TextView[16];
         h.labels = new TextView[16];
@@ -1034,7 +1118,7 @@ public class MainActivity extends Activity {
     private int addMetricRow(LinearLayout parent, int index, CardHolder holder, String l1, String l2) {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setPadding(0, 0, 0, dp(8));
+        row.setPadding(0, 0, 0, dp(7));
         parent.addView(row, new LinearLayout.LayoutParams(-1, -2));
         int rowIndex = index / 2;
         if (holder.rows != null && rowIndex >= 0 && rowIndex < holder.rows.length) holder.rows[rowIndex] = row;
@@ -1074,7 +1158,7 @@ public class MainActivity extends Activity {
         LinearLayout box = new LinearLayout(this);
         m.box = box;
         box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(10), dp(8), dp(10), dp(8));
+        box.setPadding(dp(10), dp(5), dp(10), dp(5));
         box.setBackground(round(CARD2, dp(14), 0));
         m.label = text(label, 11, MUTED, false);
         box.addView(m.label);
@@ -1093,6 +1177,36 @@ public class MainActivity extends Activity {
             found = !value.equals("0");
         }
         return "Blocks found: " + value + (found ? " 🏆" : "");
+    }
+
+    private void confirmPauseResume(CardHolder h) {
+        if (h == null || h.currentDevice == null || !supportsPauseResume(h.currentDevice) || h.pauseResumeBusy) return;
+        boolean resume = h.currentDevice.miningPaused;
+        String name = h.deviceName == null || h.deviceName.isEmpty() ? h.ip : h.deviceName;
+        LinearLayout menu = menuCard(resume ? "Resume mining" : "Pause mining");
+
+        TextView msg = text((resume ? "Resume " : "Pause ") + name + "?", 15, MUTED, false);
+        msg.setGravity(Gravity.CENTER);
+        msg.setPadding(dp(14), 0, dp(14), 0);
+        menu.addView(msg, new LinearLayout.LayoutParams(-1, -2));
+
+        LinearLayout row = dialogActionRow(menu);
+
+        final PopupWindow[] ref = new PopupWindow[1];
+        Button cancel = dialogButton("Cancel", Color.rgb(71, 85, 105));
+        cancel.setOnClickListener(v -> ref[0].dismiss());
+
+        Button confirm = dialogButton(resume ? "Resume" : "Pause", resume ? GOOD : ACTION_AMBER);
+        confirm.setOnClickListener(v -> { ref[0].dismiss(); togglePauseResume(h); });
+
+        LinearLayout.LayoutParams left = new LinearLayout.LayoutParams(0, -2, 1);
+        left.setMargins(0, 0, dp(5), 0);
+        LinearLayout.LayoutParams right = new LinearLayout.LayoutParams(0, -2, 1);
+        right.setMargins(dp(5), 0, 0, 0);
+        row.addView(cancel, left);
+        row.addView(confirm, right);
+
+        ref[0] = showOverlayCard(menu, 300);
     }
 
     private void confirmRestart(CardHolder h) {
@@ -1399,9 +1513,13 @@ public class MainActivity extends Activity {
     }
 
     private void addDialogInput(LinearLayout menu, EditText input) {
+        addDialogControl(menu, input);
+    }
+
+    private void addDialogControl(LinearLayout menu, View view) {
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
         lp.setMargins(dp(6), 0, dp(6), dp(10));
-        menu.addView(input, lp);
+        menu.addView(view, lp);
     }
 
     private void showAddDialog() {
@@ -1426,8 +1544,12 @@ public class MainActivity extends Activity {
             showMenu(null);
         }), actionButtonLp(false));
         row.addView(actionButton("Add", GOOD, () -> {
-            String ip = cleanIp(input.getText().toString());
-            if (ip.isEmpty()) return;
+            String raw = input.getText().toString();
+            String ip = cleanIp(raw);
+            if (!isValidHostInput(raw, ip)) {
+                Toast.makeText(this, "Invalid IP or hostname", Toast.LENGTH_SHORT).show();
+                return;
+            }
             List<String> ips = loadIps();
             if (ips.contains(ip)) {
                 Toast.makeText(this, "Miner already exists", Toast.LENGTH_SHORT).show();
@@ -1554,15 +1676,20 @@ public class MainActivity extends Activity {
         Button typeButton = powerTypeButton(type);
         addDialogInput(menu, nameInput);
         addDialogInput(menu, ipInput);
-        menu.addView(typeButton);
+        addDialogControl(menu, typeButton);
 
         LinearLayout row = dialogActionRow(menu);
         final PopupWindow[] ref = new PopupWindow[1];
         row.addView(actionButton("Cancel", Color.rgb(71, 85, 105), () -> showPowerDialog()), actionButtonLp(false));
         row.addView(actionButton("Add", GOOD, () -> {
             String name = nameInput.getText().toString().trim();
-            String ip = cleanIp(ipInput.getText().toString());
-            if (name.isEmpty() || ip.isEmpty()) return;
+            String raw = ipInput.getText().toString();
+            String ip = cleanIp(raw);
+            if (name.isEmpty()) return;
+            if (!isValidHostInput(raw, ip)) {
+                Toast.makeText(this, "Invalid IP or hostname", Toast.LENGTH_SHORT).show();
+                return;
+            }
             List<PowerPlug> plugs = loadPowerPlugs();
             if (findPowerPlug(plugs, ip) != null) {
                 Toast.makeText(this, "Power plug already exists", Toast.LENGTH_SHORT).show();
@@ -1592,7 +1719,7 @@ public class MainActivity extends Activity {
         Button typeButton = powerTypeButton(type);
         addDialogInput(menu, nameInput);
         addDialogInput(menu, ipInput);
-        menu.addView(typeButton);
+        addDialogControl(menu, typeButton);
 
         addDialogMenuAction(menu, menuAction("Delete", Color.rgb(248, 113, 113), () -> {
             deletePowerPlug(oldIp);
@@ -1604,8 +1731,13 @@ public class MainActivity extends Activity {
         row.addView(actionButton("Cancel", Color.rgb(71, 85, 105), () -> showPowerDialog()), actionButtonLp(false));
         row.addView(actionButton("Save", GOOD, () -> {
             String name = nameInput.getText().toString().trim();
-            String ip = cleanIp(ipInput.getText().toString());
-            if (name.isEmpty() || ip.isEmpty()) return;
+            String raw = ipInput.getText().toString();
+            String ip = cleanIp(raw);
+            if (name.isEmpty()) return;
+            if (!isValidHostInput(raw, ip)) {
+                Toast.makeText(this, "Invalid IP or hostname", Toast.LENGTH_SHORT).show();
+                return;
+            }
             List<PowerPlug> updated = loadPowerPlugs();
             PowerPlug duplicate = findPowerPlug(updated, ip);
             if (duplicate != null && !ip.equals(oldIp)) {
@@ -1640,15 +1772,49 @@ public class MainActivity extends Activity {
     }
 
     private Button powerTypeButton(String[] typeRef) {
-        Button b = dialogButton("Type: " + powerTypeLabel(typeRef[0]), Color.rgb(71, 85, 105));
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
-        lp.setMargins(dp(14), dp(8), dp(14), 0);
-        b.setLayoutParams(lp);
-        b.setOnClickListener(v -> {
-            typeRef[0] = nextPowerType(typeRef[0]);
-            b.setText("Type: " + powerTypeLabel(typeRef[0]));
-        });
+        Button b = dialogButton(powerTypeButtonText(typeRef[0]), CARD2);
+        b.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+        b.setTextAlignment(View.TEXT_ALIGNMENT_VIEW_START);
+        b.setPadding(dp(14), dp(10), dp(14), dp(10));
+        b.setTextColor(TEXT);
+        b.setBackground(round(CARD2, dp(12), Color.rgb(51, 82, 120)));
+        b.setOnClickListener(v -> showPowerTypeChoices(b, typeRef));
         return b;
+    }
+
+    private String powerTypeButtonText(String type) {
+        return "Type: " + powerTypeLabel(type);
+    }
+
+    private void showPowerTypeChoices(Button anchor, String[] typeRef) {
+        LinearLayout menu = new LinearLayout(this);
+        menu.setOrientation(LinearLayout.VERTICAL);
+        menu.setPadding(dp(6), dp(6), dp(6), dp(6));
+        menu.setBackground(round(Color.rgb(12, 28, 48), dp(12), Color.rgb(51, 82, 120)));
+
+        final PopupWindow[] ref = new PopupWindow[1];
+        addPowerTypeChoice(menu, ref, anchor, typeRef, POWER_TYPE_TASMOTA);
+        addPowerTypeChoice(menu, ref, anchor, typeRef, POWER_TYPE_SHELLY1);
+        addPowerTypeChoice(menu, ref, anchor, typeRef, POWER_TYPE_SHELLY2_PLUS);
+
+        int width = anchor.getWidth() > 0 ? anchor.getWidth() : dp(260);
+        ref[0] = new PopupWindow(menu, width, ViewGroup.LayoutParams.WRAP_CONTENT, true);
+        ref[0].setOutsideTouchable(true);
+        ref[0].setBackgroundDrawable(round(Color.TRANSPARENT, 0, 0));
+        ref[0].showAsDropDown(anchor, 0, dp(4));
+    }
+
+    private void addPowerTypeChoice(LinearLayout menu, PopupWindow[] ref, Button anchor, String[] typeRef, String type) {
+        boolean selected = normalizePowerType(typeRef[0]).equals(normalizePowerType(type));
+        TextView row = text(powerTypeLabel(type), 16, selected ? ACCENT : TEXT, selected);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(12), dp(10), dp(12), dp(10));
+        row.setOnClickListener(v -> {
+            typeRef[0] = normalizePowerType(type);
+            anchor.setText(powerTypeButtonText(typeRef[0]));
+            if (ref[0] != null) ref[0].dismiss();
+        });
+        menu.addView(row, new LinearLayout.LayoutParams(-1, -2));
     }
 
     private PowerState fetchPowerState(PowerPlug plug) {
@@ -1948,7 +2114,11 @@ public class MainActivity extends Activity {
 
             JSONObject settings = root.optJSONObject("settings");
             if (settings != null) {
-                if (settings.has("refreshIntervalMs")) setRefreshIntervalMs(settings.optLong("refreshIntervalMs", DEFAULT_REFRESH_INTERVAL_MS));
+                if (settings.has("refreshIntervalMs")) {
+                    prefs.edit().putLong(KEY_REFRESH_INTERVAL_MS, settings.optLong("refreshIntervalMs", DEFAULT_REFRESH_INTERVAL_MS)).apply();
+                    handler.removeCallbacks(refreshRunnable);
+                    nextRefreshIndex = 0;
+                }
                 if (settings.has("onlineOnly")) setOnlineOnly(settings.optBoolean("onlineOnly", isOnlineOnly()));
                 if (settings.has("cardsExpanded")) prefs.edit().putBoolean(KEY_CARDS_EXPANDED, settings.optBoolean("cardsExpanded", areCardsExpandedByDefault())).apply();
             }
@@ -2199,8 +2369,12 @@ public class MainActivity extends Activity {
         final PopupWindow[] ref = new PopupWindow[1];
         row.addView(actionButton("Cancel", Color.rgb(71, 85, 105), () -> showBitaxeDialog()), actionButtonLp(false));
         row.addView(actionButton("Save", GOOD, () -> {
-            String newIp = cleanIp(input.getText().toString());
-            if (newIp.isEmpty()) return;
+            String raw = input.getText().toString();
+            String newIp = cleanIp(raw);
+            if (!isValidHostInput(raw, newIp)) {
+                Toast.makeText(this, "Invalid IP or hostname", Toast.LENGTH_SHORT).show();
+                return;
+            }
             List<String> ips = loadIps();
             if (!newIp.equals(oldIp) && ips.contains(newIp)) {
                 Toast.makeText(this, "Miner already exists", Toast.LENGTH_SHORT).show();
@@ -2308,7 +2482,7 @@ public class MainActivity extends Activity {
     private static String powerTypeLabel(String type) {
         type = normalizePowerType(type);
         if (POWER_TYPE_SHELLY1.equals(type)) return "Shelly Gen1";
-        if (POWER_TYPE_SHELLY2_PLUS.equals(type)) return "Shelly Gen2/3";
+        if (POWER_TYPE_SHELLY2_PLUS.equals(type)) return "Shelly Gen2+";
         return "Tasmota";
     }
 
@@ -2367,29 +2541,85 @@ public class MainActivity extends Activity {
 
     private JSONObject deviceToJson(Device d) throws Exception {
         JSONObject j = new JSONObject();
-        j.put("ip", d.ip); j.put("name", d.name); j.put("model", d.model); j.put("firmware", d.firmware); j.put("chip", d.chip);
+        j.put("ip", d.ip); j.put("name", d.name); j.put("model", d.model); j.put("firmware", d.firmware); j.put("axeOSVersion", d.axeOSVersion); j.put("chip", d.chip);
         j.put("block", d.block); j.put("bestDiff", d.bestDiff); j.put("sessionDiff", d.sessionDiff); j.put("poolDiff", d.poolDiff);
         j.put("wifi", d.wifi); j.put("uptime", d.uptime); j.put("latency", d.latency); j.put("sharesAccepted", d.sharesAccepted);
         j.put("sharesRejected", d.sharesRejected); j.put("hashRate", d.hashRate); j.put("hashRate10m", d.hashRate10m);
         j.put("responseTime", d.responseTime); j.put("temp", d.temp); j.put("vrTemp", d.vrTemp); j.put("power", d.power);
         j.put("voltage", d.voltage); j.put("frequency", d.frequency); j.put("coreMv", d.coreMv); j.put("fanSpeed", d.fanSpeed);
-        j.put("updatedAt", d.updatedAt);
+        j.put("updatedAt", d.updatedAt); j.put("online", d.online); j.put("miningPaused", d.miningPaused);
         return j;
     }
 
     private Device deviceFromJson(JSONObject j) {
         Device d = new Device();
-        d.ip = str(j, "ip", ""); d.name = str(j, "name", d.ip); d.model = str(j, "model", ""); d.firmware = str(j, "firmware", ""); d.chip = str(j, "chip", "");
+        d.ip = str(j, "ip", ""); d.name = str(j, "name", d.ip); d.model = str(j, "model", ""); d.firmware = str(j, "firmware", ""); d.axeOSVersion = str(j, "axeOSVersion", d.firmware); d.chip = str(j, "chip", "");
         d.block = str(j, "block", "–"); d.bestDiff = str(j, "bestDiff", "–"); d.sessionDiff = str(j, "sessionDiff", "–"); d.poolDiff = str(j, "poolDiff", "–");
         d.wifi = str(j, "wifi", "–"); d.uptime = str(j, "uptime", "–"); d.latency = (long) num(j, "latency"); d.sharesAccepted = (long) num(j, "sharesAccepted");
         d.sharesRejected = (long) num(j, "sharesRejected"); d.hashRate = num(j, "hashRate"); d.hashRate10m = num(j, "hashRate10m");
         d.responseTime = num(j, "responseTime"); d.temp = num(j, "temp"); d.vrTemp = num(j, "vrTemp"); d.power = num(j, "power");
         d.voltage = num(j, "voltage"); d.frequency = num(j, "frequency"); d.coreMv = num(j, "coreMv"); d.fanSpeed = num(j, "fanSpeed");
-        d.updatedAt = (long) num(j, "updatedAt");
+        d.updatedAt = (long) num(j, "updatedAt"); d.online = j.optBoolean("online", false); d.miningPaused = j.optBoolean("miningPaused", false);
         return d;
     }
 
     private static String cleanIp(String s) { return s == null ? "" : s.trim().replace("http://", "").replace("https://", "").replaceAll("/.*$", ""); }
+    private static boolean isValidHostInput(String raw, String clean) {
+        if (raw == null || clean == null || clean.isEmpty()) return false;
+        String text = raw.trim();
+        if (text.isEmpty()) return false;
+        String withoutScheme = text;
+        if (withoutScheme.startsWith("http://")) withoutScheme = withoutScheme.substring(7);
+        else if (withoutScheme.startsWith("https://")) withoutScheme = withoutScheme.substring(8);
+        if (withoutScheme.contains("/") || withoutScheme.contains("\\") || withoutScheme.contains("?") || withoutScheme.contains("#")) return false;
+        return isValidHostPort(clean);
+    }
+    private static boolean isValidHostPort(String value) {
+        if (value == null || value.isEmpty() || value.matches(".*\\s+.*")) return false;
+        if (value.indexOf(':') != value.lastIndexOf(':')) return false;
+        String host = value;
+        int colon = value.indexOf(':');
+        if (colon >= 0) {
+            host = value.substring(0, colon);
+            String portText = value.substring(colon + 1);
+            if (portText.isEmpty() || !portText.matches("[0-9]+")) return false;
+            try {
+                int port = Integer.parseInt(portText);
+                if (port < 1 || port > 65535) return false;
+            } catch (Exception ignored) {
+                return false;
+            }
+        }
+        return isValidIpv4(host) || isValidHostname(host);
+    }
+    private static boolean isValidIpv4(String host) {
+        if (host == null) return false;
+        String[] parts = host.split("\\.", -1);
+        if (parts.length != 4) return false;
+        for (String part : parts) {
+            if (part.isEmpty() || !part.matches("[0-9]{1,3}")) return false;
+            int value = Integer.parseInt(part);
+            if (value < 0 || value > 255) return false;
+        }
+        return true;
+    }
+    private static boolean isValidHostname(String host) {
+        if (host == null || host.isEmpty() || host.length() > 253 || host.startsWith(".") || host.endsWith(".")) return false;
+        if (host.matches("[0-9.]+")) return false;
+        String[] labels = host.split("\\.", -1);
+        for (String label : labels) {
+            if (label.isEmpty() || label.length() > 63) return false;
+            if (!isAsciiLetterOrDigit(label.charAt(0)) || !isAsciiLetterOrDigit(label.charAt(label.length() - 1))) return false;
+            for (int i = 0; i < label.length(); i++) {
+                char ch = label.charAt(i);
+                if (!isAsciiLetterOrDigit(ch) && ch != '-') return false;
+            }
+        }
+        return true;
+    }
+    private static boolean isAsciiLetterOrDigit(char ch) {
+        return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9');
+    }
     private static String str(JSONObject j, String k, String def) { return j.has(k) && !j.isNull(k) ? j.optString(k, def) : def; }
     private static String raw(JSONObject j, String k, String def) { Object o = j.opt(k); return o == null || JSONObject.NULL.equals(o) ? def : String.valueOf(o); }
     private static double num(JSONObject j, String k) { return j.optDouble(k, 0); }
